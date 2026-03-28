@@ -5,3 +5,4 @@
 - [ ] mcp
 - [ ] statusline
 - [ ] setup specific config
+- [ ] opinionated ghostty config
