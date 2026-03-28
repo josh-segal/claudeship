@@ -4,6 +4,8 @@
 
 Opinionated safety defaults for Claude Code. Configured in `.claude/settings.json`.
 
+**Permissions deny** vs **hooks**: `permissions.deny` glob-matches the tool argument from the start — good for exact patterns like file paths. Hooks receive the full command string and regex-search within it, catching dangerous commands even when chained (e.g. `cd foo && sudo rm -rf /`). Some rules (like `sudo`) appear in both as defense-in-depth.
+
 ### Permissions (hard deny)
 
 - No editing/writing dotfiles in `~` (read is allowed)

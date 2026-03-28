@@ -28,6 +28,7 @@ PATTERNS=(
     'git\s+push\s+.*--force'
     'git\s+reset\s+--hard'
     'git\s+branch\s+-D'
+    'sudo\s+'
 )
 
 for pattern in "${PATTERNS[@]}"; do
