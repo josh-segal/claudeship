@@ -27,13 +27,26 @@ Git:
 - `reset --hard`
 - `branch -D`
 
-### `protect-env.sh`
+### `protect-files.sh`
 
 PreToolUse hook on Read, Edit, Write.
 
-- Blocks `.env` and `.env.*`
-- Allows `.env.example`
-- Returns a message directing Claude to use `.env.example` as reference
+- Blocks `.env` and `.env.*` (allows `.env.example`)
+- Lockfiles: `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `poetry.lock`, `uv.lock`, `Cargo.lock`
+- Infra: `docker-compose*.yml`, `terraform/*`
+
+### `quality-gate.sh`
+
+Stop + SubagentStop hook. Auto-formats changed files using whichever tools are present:
+
+- Prettier (JS/TS)
+- Ruff format + check --fix (Python)
+- gofmt (Go)
+- rustfmt (Rust)
+
+### `notify.sh`
+
+Notification hook. Sends a macOS notification when Claude needs attention.
 
 ## workspace.sh
 

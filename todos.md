@@ -1,0 +1,7 @@
+- [ ] hooks
+- [ ] accounts
+- [ ] usage
+- [ ] workspaces
+- [ ] mcp
+- [ ] statusline
+- [ ] setup specific config
