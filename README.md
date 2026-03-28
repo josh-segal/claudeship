@@ -48,6 +48,10 @@ Stop + SubagentStop hook. Auto-formats changed files using whichever tools are p
 
 Notification hook. Sends a macOS notification when Claude needs attention.
 
+### `stop.sh`
+
+Stop hook. Fires when Claude finishes a response. If Ghostty is the focused app, sends a BEL to the terminal — Ghostty adds a 🔔 to the tab title, which clears when you focus that tab. If Ghostty is not focused, sends a macOS notification instead.
+
 ## workspace.sh
 
 Manages isolated development workspaces using git worktrees and Docker Compose, with Traefik for routing.
