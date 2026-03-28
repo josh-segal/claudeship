@@ -46,11 +46,23 @@ Stop + SubagentStop hook. Auto-formats changed files using whichever tools are p
 
 ### `notify.sh`
 
-Notification hook. Sends a macOS notification when Claude needs attention.
+Notification hook. Sends a macOS notification via ClaudeNotifier when Claude needs attention.
 
 ### `stop.sh`
 
-Stop hook. Fires when Claude finishes a response. If Ghostty is the focused app, sends a BEL to the terminal — Ghostty adds a 🔔 to the tab title, which clears when you focus that tab. If Ghostty is not focused, sends a macOS notification instead.
+Stop hook. Fires when Claude finishes a response. If Ghostty is the focused app, sends a BEL to the terminal — Ghostty adds a 🔔 to the tab title, which clears when you focus that tab. If Ghostty is not focused, sends a macOS notification via ClaudeNotifier instead.
+
+## Setup
+
+### ClaudeNotifier
+
+Notifications use a native macOS app (`ClaudeNotifier.app`) that shows the Claude icon. Run once after cloning:
+
+```
+bash .claude/scripts/install-notifier.sh
+```
+
+Then go to **System Settings > Notifications > Claude Notifier** and enable notifications.
 
 ## workspace.sh
 

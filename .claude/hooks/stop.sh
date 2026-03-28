@@ -23,7 +23,7 @@ if [ "$focused" = "ghostty" ]; then
   fi
 else
   # Ghostty is not focused — send a macOS notification
-  osascript -e 'display notification "Claude Code is done" with title "Claude Code" sound name "Ping"' 2>/dev/null
+  /Applications/ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier "Claude Code" "Done" "Ping" &
 fi
 
 exit 0

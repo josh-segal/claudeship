@@ -5,6 +5,6 @@
 # Sends a macOS notification when Claude needs attention.
 #
 
-osascript -e 'display notification "Claude Code needs your attention" with title "Claude Code" sound name "Ping"' 2>/dev/null
+/Applications/ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier "Claude Code" "Claude needs your attention" "Ping" &
 
 exit 0
