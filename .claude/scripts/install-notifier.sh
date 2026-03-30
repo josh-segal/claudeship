@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# install-notifier.sh — Builds and installs ClaudeNotifier.app
+# install-notifier.sh — Builds and installs ClaudeNotifier as a persistent daemon
 #
-# Run once after cloning to set up native macOS notifications with the Claude icon.
+# Run once after cloning (and after any changes to ClaudeNotifier.swift).
 # Requires: swiftc, Claude.app in /Applications
 #
 
@@ -10,14 +10,16 @@ set -e
 
 APP="/Applications/ClaudeNotifier.app"
 SWIFT_SRC="$(dirname "$0")/../tools/ClaudeNotifier.swift"
+PLIST="$HOME/Library/LaunchAgents/com.claudeship.notifier.plist"
+LABEL="com.claudeship.notifier"
+DOMAIN="gui/$(id -u)"
 
 echo "Building ClaudeNotifier.app..."
 
-# Create bundle structure
+# ── App bundle structure ──────────────────────────────────────────────────────
 mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
 
-# Write Info.plist
 cat > "$APP/Contents/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -38,7 +40,7 @@ cat > "$APP/Contents/Info.plist" << 'EOF'
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
-    <string>10.14</string>
+    <string>12.0</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>LSUIElement</key>
@@ -47,7 +49,7 @@ cat > "$APP/Contents/Info.plist" << 'EOF'
 </plist>
 EOF
 
-# Copy Claude icon
+# ── Claude icon ───────────────────────────────────────────────────────────────
 if [ -f "/Applications/Claude.app/Contents/Resources/electron.icns" ]; then
   cp "/Applications/Claude.app/Contents/Resources/electron.icns" "$APP/Contents/Resources/AppIcon.icns"
   echo "Claude icon copied."
@@ -55,18 +57,60 @@ else
   echo "Warning: Claude.app not found, skipping icon."
 fi
 
-# Compile Swift binary
-swiftc "$SWIFT_SRC" -o "$APP/Contents/MacOS/ClaudeNotifier"
+# ── Compile ───────────────────────────────────────────────────────────────────
+swiftc -swift-version 5 "$SWIFT_SRC" -o "$APP/Contents/MacOS/ClaudeNotifier"
 echo "Compiled."
 
-# Ad-hoc sign
+# ── Sign ──────────────────────────────────────────────────────────────────────
 codesign --force --deep --sign - "$APP"
 echo "Signed."
 
-# Launch once to register with Notification Center
-echo "Launching to register with Notification Center..."
-open "$APP"
-sleep 2
+# ── LaunchAgent plist ─────────────────────────────────────────────────────────
+echo "Installing LaunchAgent..."
+mkdir -p "$HOME/Library/LaunchAgents"
+
+cat > "$PLIST" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$APP/Contents/MacOS/ClaudeNotifier</string>
+        <string>--daemon</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardOutPath</key>
+    <string>/tmp/claude-notifier.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/claude-notifier.log</string>
+</dict>
+</plist>
+EOF
+
+# ── Load / reload daemon ──────────────────────────────────────────────────────
+launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+launchctl bootstrap "$DOMAIN" "$PLIST"
+echo "LaunchAgent loaded."
+
+# Give it a moment to bind the socket
+sleep 1
+
+if [ -S /tmp/claude-notifier.sock ]; then
+  echo "Daemon is running. Socket ready at /tmp/claude-notifier.sock"
+else
+  echo "Warning: socket not yet present. Check /tmp/claude-notifier.log"
+fi
 
 echo ""
-echo "Done. Go to System Settings > Notifications > Claude Notifier and enable notifications."
+echo "Done. If this is a first install, go to:"
+echo "  System Settings > Notifications > Claude Notifier"
+echo "and set the style to Banners or Alerts."

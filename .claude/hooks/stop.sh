@@ -2,9 +2,12 @@
 #
 # stop.sh — Stop hook for Claude Code
 #
-# If Ghostty is not focused: send a macOS notification.
-# If Ghostty is focused: ring the bell (🔔 in tab title, clears on focus).
+# If Ghostty is focused: ring the terminal bell (tab badge).
+# Otherwise: send a macOS notification via the ClaudeNotifier daemon.
 #
+
+NOTIFIER="/Applications/ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier"
+SOCK="/tmp/claude-notifier.sock"
 
 # Kill any existing animation before starting a new one
 if [ -f /tmp/claude-anim-pid ]; then
@@ -12,9 +15,7 @@ if [ -f /tmp/claude-anim-pid ]; then
   rm -f /tmp/claude-anim-pid
 fi
 
-focused=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true' 2>/dev/null)
-
-if [ "$focused" = "ghostty" ]; then
+if "$NOTIFIER" check-focus ghostty 2>/dev/null; then
   parent_tty=$(ps -p $PPID -o tty= 2>/dev/null | tr -d ' ')
   tty_dev="/dev/$parent_tty"
 
@@ -22,8 +23,20 @@ if [ "$focused" = "ghostty" ]; then
     printf '\a' > "$tty_dev" 2>/dev/null
   fi
 else
-  # Ghostty is not focused — send a macOS notification
-  /Applications/ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier "Claude Code" "Done" "Ping" &
+  subtitle="$(basename "$PWD")"
+  branch=$(git branch --show-current 2>/dev/null)
+  [ -n "$branch" ] && subtitle="$subtitle ($branch)"
+
+  payload=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'title':    'Claude Code',
+    'message':  'Done',
+    'subtitle': sys.argv[1],
+    'sound':    'Ping'
+}))" "$subtitle" 2>/dev/null)
+
+  [ -S "$SOCK" ] && printf '%s' "$payload" | nc -U -w 2 "$SOCK"
 fi
 
 exit 0

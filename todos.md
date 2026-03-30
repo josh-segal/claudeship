@@ -6,3 +6,4 @@
 - [ ] statusline
 - [ ] setup specific config
 - [ ] opinionated ghostty config
+- [ ] replace throbber text with SWE/AI/ML news/research/articles/posts/etc.

@@ -1,5 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "enableAllProjectMcpServers": true,
   "permissions": {
     "deny": [
       "Edit(~/.*)",
@@ -11,6 +12,24 @@
   },
   "hooks": {
     "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-input.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-input.sh\" --plan"
+          }
+        ]
+      },
       {
         "matcher": "Bash",
         "hooks": [
@@ -30,16 +49,32 @@
         ]
       }
     ],
-    "Stop": [
+    "PermissionRequest": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop.sh\""
-          },
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-permission.sh\""
+          }
+        ]
+      }
+    ],
+    "Elicitation": [
+      {
+        "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/quality-gate.sh\""
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-elicitation.sh\""
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-subagent-start.sh\""
           }
         ]
       }
@@ -50,16 +85,38 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/quality-gate.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-subagent-stop.sh\""
           }
         ]
       }
     ],
-    "Notification": [
+    "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notify.sh\""
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/quality-gate.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-turn-stop.sh\""
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-stop-failure.sh\""
           }
         ]
       }

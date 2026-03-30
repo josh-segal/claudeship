@@ -44,25 +44,48 @@ Stop + SubagentStop hook. Auto-formats changed files using whichever tools are p
 - gofmt (Go)
 - rustfmt (Rust)
 
-### `notify.sh`
-
-Notification hook. Sends a macOS notification via ClaudeNotifier when Claude needs attention.
-
 ### `stop.sh`
 
-Stop hook. Fires when Claude finishes a response. If Ghostty is the focused app, sends a BEL to the terminal — Ghostty adds a 🔔 to the tab title, which clears when you focus that tab. If Ghostty is not focused, sends a macOS notification via ClaudeNotifier instead.
+Stop hook. If Ghostty is the focused app, sends a BEL to the terminal (Ghostty adds 🔔 to the tab title). If Ghostty is not focused, sends a macOS notification via the ClaudeNotifier daemon.
 
-## Setup
+### `notifications/`
 
-### ClaudeNotifier
+Hook scripts that send events to the ClaudeNotifier daemon socket. Each maps to a specific Claude Code hook:
 
-Notifications use a native macOS app (`ClaudeNotifier.app`) that shows the Claude icon. Run once after cloning:
+| Script | Hook | Trigger |
+|---|---|---|
+| `notify-input.sh` | PreToolUse → AskUserQuestion | Claude asks you a question |
+| `notify-input.sh --plan` | PreToolUse → ExitPlanMode | Plan ready for approval |
+| `notify-permission.sh` | PermissionRequest | Tool approval dialog appears |
+| `notify-elicitation.sh` | Elicitation | MCP server needs input |
+| `notify-subagent-start.sh` | SubagentStart | Subagent spawned — registers in daemon state |
+| `notify-subagent-stop.sh` | SubagentStop | Subagent finished — posts progress notification |
+| `notify-turn-stop.sh` | Stop | Turn ended — clears subagent tracking state |
+| `notify-stop-failure.sh` | StopFailure | Turn ended in API error |
+
+## ClaudeNotifier
+
+A native macOS notification daemon (`ClaudeNotifier.app`) that powers all notifications in this setup.
+
+### Architecture
+
+`ClaudeNotifier` runs as a persistent LaunchAgent (`com.claudeship.notifier`) and listens on a Unix domain socket at `/tmp/claude-notifier.sock`. Hook scripts write JSON to the socket - delivery latency is ~1ms.
+
+The daemon manages two modes:
+
+**Notification delivery** — receives `{"type":"notify","title":"...","message":"...","subtitle":"...","sound":"..."}` and posts a native macOS banner with an "Open Terminal" action button. All notifications use `.timeSensitive` interruption level to push through Focus modes.
+
+**Subagent progress tracking** — maintains in-memory state mapping parent sessions to their spawned subagents. On `subagent_start`, registers the agent name and increments the total count. On `subagent_stop`, increments the completion count and posts `"Agent Name done (2/3)"`. On `turn_stop`, clears state for that session. This gives per-turn progress notifications when Claude spawns multiple parallel agents.
+
+Logs write to `/tmp/claude-notifier.log` with 1MB rotation (previous log kept at `.log.1`).
+
+### Setup
 
 ```
 bash .claude/scripts/install-notifier.sh
 ```
 
-Then go to **System Settings > Notifications > Claude Notifier** and enable notifications.
+Then go to **System Settings > Notifications > Claude Notifier** and set the style to **Banners** or **Alerts**.
 
 ## workspace.sh
 
