@@ -25,12 +25,13 @@ usage() {
 Usage: workspace.sh <command> [args]
 
 Workspace lifecycle:
-  up      <name>   Create worktree + branch, install deps, start Docker stack
-  down    <name>   Stop Docker stack (worktree remains)
-  destroy <name>   Stop Docker stack and remove worktree + branch
-  ls               List all workspaces with status, branch, and URLs
-  logs    <name>   Tail Docker logs for a workspace
-  status  <name>   Show detailed status for a workspace
+  up      <name>            Create worktree + branch, install deps, start Docker stack
+  down    <name>            Stop Docker stack (worktree remains)
+  destroy <name>            Stop Docker stack and remove worktree + branch
+  context <name> [task]     Generate workspace CLAUDE.md and .workspace/ artifact stubs
+  ls                        List all workspaces with status, branch, and URLs
+  logs    <name>            Tail Docker logs for a workspace
+  status  <name>            Show detailed status for a workspace
 
 Worktree root: $WORKTREE_ROOT
 Branch format: $BRANCH_PREFIX/<name>
@@ -297,11 +298,9 @@ cmd_up() {
     echo "  Create one or copy manually to $wt_path/.env"
   fi
 
-  # 5. Copy CLAUDE.md and .claude/ from main checkout
-  if [ -f "$MAIN_CHECKOUT/CLAUDE.md" ]; then
-    echo "Copying CLAUDE.md from main checkout"
-    cp "$MAIN_CHECKOUT/CLAUDE.md" "$wt_path/CLAUDE.md"
-  fi
+  # 5. Copy .claude/ from main checkout (hooks + settings)
+  # Note: CLAUDE.md is NOT copied here — use 'workspace.sh context <name>' to generate
+  # a workspace-specific CLAUDE.md with task context injected.
   if [ -d "$MAIN_CHECKOUT/.claude" ]; then
     echo "Copying .claude/ from main checkout"
     cp -a "$MAIN_CHECKOUT/.claude" "$wt_path/.claude"
@@ -496,6 +495,107 @@ cmd_ls() {
   fi
 }
 
+cmd_context() {
+  local name="${1:?Error: workspace name required. Usage: workspace.sh context <name> [task]}"
+  local task="${2:-}"
+  local wt_path
+  wt_path="$(worktree_path "$name")"
+  local branch="${BRANCH_PREFIX}/${name}"
+  local created_date
+  created_date="$(date +%Y-%m-%d)"
+
+  if ! worktree_exists "$name"; then
+    echo "Error: workspace \"${name}\" does not exist. Run: workspace.sh up ${name}"
+    exit 1
+  fi
+
+  echo "Generating workspace context for \"${name}\"..."
+
+  # Generate workspace CLAUDE.md (prepend workspace block to main checkout's CLAUDE.md)
+  local main_claude=""
+  if [ -f "$MAIN_CHECKOUT/CLAUDE.md" ]; then
+    main_claude="$(cat "$MAIN_CHECKOUT/CLAUDE.md")"
+  fi
+
+  local task_line="${task:-"(no task description provided — update this file with the task context)"}"
+
+  cat > "$wt_path/CLAUDE.md" <<CLAUDEMD
+<!-- Auto-generated workspace context — edit .workspace/plan.md and .workspace/research.md instead -->
+## Active Workspace
+- Name: ${name}
+- Branch: ${branch}
+- Frontend: http://cos-${name}.lvh.me
+- API: http://api-cos-${name}.lvh.me
+- Phoenix: http://phoenix-cos-${name}.lvh.me
+- Created: ${created_date}
+
+## Task
+${task_line}
+
+## Task Context
+Read \`.workspace/research.md\` and \`.workspace/plan.md\` as initial proposals from setup.
+Verify findings before acting on them — they may be incomplete or wrong.
+Update these files as your understanding evolves.
+
+---
+
+${main_claude}
+CLAUDEMD
+
+  # Create .workspace/ artifact directory with labeled stubs
+  mkdir -p "$wt_path/.workspace"
+
+  if [ ! -f "$wt_path/.workspace/research.md" ]; then
+    cat > "$wt_path/.workspace/research.md" <<'STUB'
+# Research Notes
+
+> **Status: stub** — populate this with codebase findings before opening the workspace session.
+> Treat this as a starting point to verify, not ground truth.
+
+## Relevant files
+
+
+## Key observations
+
+
+## Potential gotchas
+
+STUB
+  fi
+
+  if [ ! -f "$wt_path/.workspace/plan.md" ]; then
+    cat > "$wt_path/.workspace/plan.md" <<'STUB'
+# Implementation Plan
+
+> **Status: stub** — populate this with a proposed approach before opening the workspace session.
+> Treat this as a starting point to verify, not a fixed spec. Update as understanding evolves.
+
+## Approach
+
+
+## Steps
+
+
+## Open questions
+
+STUB
+  fi
+
+  # Add .workspace/ to .gitignore in the worktree (ephemeral session artifacts)
+  if [ -f "$wt_path/.gitignore" ]; then
+    if ! grep -q "^\.workspace/$" "$wt_path/.gitignore" 2>/dev/null; then
+      echo ".workspace/" >> "$wt_path/.gitignore"
+    fi
+  else
+    echo ".workspace/" > "$wt_path/.gitignore"
+  fi
+
+  echo "Context generated:"
+  echo "  CLAUDE.md:                  $wt_path/CLAUDE.md"
+  echo "  .workspace/research.md:     $wt_path/.workspace/research.md"
+  echo "  .workspace/plan.md:         $wt_path/.workspace/plan.md"
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -504,6 +604,7 @@ case "${1:-}" in
   up)      shift; cmd_up "$@" ;;
   down)    shift; cmd_down "$@" ;;
   destroy) shift; cmd_destroy "$@" ;;
+  context) shift; cmd_context "$@" ;;
   logs)    shift; cmd_logs "$@" ;;
   status)  shift; cmd_status "$@" ;;
   ls)      cmd_ls ;;

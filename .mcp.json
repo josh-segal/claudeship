@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "workspace": {
+      "command": "node",
+      "args": ["/Users/joshuasegal/Coding/claudeship/mcp/workspace-server.js"]
+    }
+  }
+}

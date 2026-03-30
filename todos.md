@@ -6,4 +6,5 @@
 - [ ] statusline
 - [ ] setup specific config
 - [ ] opinionated ghostty config
-- [ ] replace throbber text with SWE/AI/ML news/research/articles/posts/etc.
+- [ ] replace throbber text with SWE/AI/ML news/research/articles/posts/etc. - TLDR AI one-liner + link to articles maybe urltomarkdown of https://tldr.tech/ai/2026-03-30
+- [ ] notifications
