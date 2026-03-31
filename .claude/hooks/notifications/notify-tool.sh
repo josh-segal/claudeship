@@ -49,4 +49,18 @@ PYEOF
 )" "$input" 2>/dev/null)
 
 [ -n "$payload" ] && [ -S "$SOCK" ] && printf '%s' "$payload" | nc -U -w 2 "$SOCK"
+
+# Clear any pending permission notifications for this session — a tool firing
+# means any pending PermissionRequest was answered (allowed).
+clear=$(python3 -c "
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    sid = d.get('session_id', '')
+    if sid: print(json.dumps({'type': 'session_inputs_clear', 'session_id': sid}))
+except Exception:
+    pass
+" "$input" 2>/dev/null)
+[ -n "$clear" ] && [ -S "$SOCK" ] && printf '%s' "$clear" | nc -U -w 2 "$SOCK"
+
 exit 0

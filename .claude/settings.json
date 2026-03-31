@@ -150,6 +150,28 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-input-answered.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 120,
+            "statusMessage": "Rebuilding ClaudeNotifier...",
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; if [[ \"$f\" == *\".claude/tools/ClaudeNotifier.swift\" ]]; then cd \"$CLAUDE_PROJECT_DIR\" && swiftc .claude/tools/ClaudeNotifier.swift -o .claude/tools/ClaudeNotifier -framework Cocoa && codesign --force --sign - .claude/tools/ClaudeNotifier && { pkill -f ClaudeNotifier 2>/dev/null; .claude/tools/ClaudeNotifier --daemon >> /tmp/claude-notifier.log 2>&1 & }; fi; } || true"
+          }
+        ]
+      }
+    ],
     "StopFailure": [
       {
         "hooks": [

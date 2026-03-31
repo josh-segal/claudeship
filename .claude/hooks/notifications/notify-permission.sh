@@ -58,7 +58,7 @@ if [ ! -S "$SOCK" ]; then
     exit 0
 fi
 
-SESSION_ID="${CLAUDE_SESSION_ID:-}"
+SESSION_ID=$(echo "$input" | python3 -c "import json,sys; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null)
 
 payload=$(python3 -c "
 import json, sys

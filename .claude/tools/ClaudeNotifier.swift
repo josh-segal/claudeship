@@ -438,7 +438,10 @@ class ClaudeNotifierDaemon: NSObject {
         }
         panelContent.refresh(
             inputs: inputs, rows: rows,
-            onFocus: { [weak self] cwd in self?.focusGhostty(cwd: cwd) },
+            onFocus: { [weak self] cwd in
+                self?.focusGhostty(cwd: cwd)
+                self?.panel.orderOut(nil)
+            },
             onAnswer: { [weak self] requestId, chosen in
                 self?.writeReply(requestId: requestId, content: chosen)
             })
@@ -619,7 +622,15 @@ class ClaudeNotifierDaemon: NSObject {
         case "turn_stop":
             DispatchQueue.main.async { [weak self] in self?.handleSessionStop(json) }
         case "input_question":
-            DispatchQueue.main.async { [weak self] in self?.handleInputQuestion(json) }
+            DispatchQueue.main.async { [weak self] in
+                let sid = json["session_id"] as? String ?? "(nil)"
+                let rid = json["request_id"] as? String ?? "?"
+                let ts = ISO8601DateFormatter().string(from: Date())
+                print("[\(ts)] daemon: input_question id=\(rid) session=\(sid)")
+                self?.handleInputQuestion(json)
+            }
+        case "session_inputs_clear":
+            DispatchQueue.main.async { [weak self] in self?.handleSessionInputsClear(json) }
         default:
             break
         }
@@ -785,6 +796,19 @@ class ClaudeNotifierDaemon: NSObject {
         panel.orderFrontRegardless()
     }
 
+    func handleSessionInputsClear(_ json: [String: Any]) {
+        guard let sessionId = json["session_id"] as? String else { return }
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let stored = pendingInputs.values.map { "\($0.requestId)@\($0.sessionId ?? "nil")" }.joined(separator: ", ")
+        print("[\(ts)] daemon: session_inputs_clear session=\(sessionId) pending=[\(stored)]")
+        let before = pendingInputs.count
+        pendingInputs = pendingInputs.filter { $0.value.sessionId != sessionId }
+        guard pendingInputs.count < before else { return }
+        updateStatusTitle()
+        refresh()
+        if pendingInputs.isEmpty { panel.orderOut(nil) }
+    }
+
     func writeReply(requestId: String, content: String) {
         let replyPath = "/tmp/claude-input-reply-\(requestId)"
         do {
@@ -797,10 +821,7 @@ class ClaudeNotifierDaemon: NSObject {
         pendingInputs.removeValue(forKey: requestId)
         updateStatusTitle()
         refresh()
-        // Close panel if nothing left to show
-        if pendingInputs.isEmpty && !sessions.values.contains(where: { $0.isDone }) {
-            panel.orderOut(nil)
-        }
+        panel.orderOut(nil)
     }
 
 }
