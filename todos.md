@@ -9,3 +9,4 @@
 - [ ] replace throbber text with SWE/AI/ML news/research/articles/posts/etc. - TLDR AI one-liner + link to articles maybe urltomarkdown of https://tldr.tech/ai/2026-03-30
 - [ ] notifications
 - [ ] git-like change graph, research entire
+- [ ] make user level project
