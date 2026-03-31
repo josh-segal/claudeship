@@ -385,15 +385,15 @@ class ClaudeNotifierDaemon: NSObject {
     }
 
     func positionPanel() {
-        guard let btn = statusItem.button, let win = btn.window else { return }
-        let inWin = btn.convert(btn.bounds, to: nil)
-        let onScreen = win.convertToScreen(inWin)
+        guard let screen = NSScreen.main else { return }
         panelContent.layoutSubtreeIfNeeded()
         let height = panelContent.fittingSize.height
-        panel.setFrame(
-            NSRect(x: onScreen.minX, y: onScreen.minY - height, width: 340, height: height),
-            display: true
-        )
+        let sw = screen.frame.width
+        let sy = screen.frame.maxY
+        let menuBarHeight = NSStatusBar.system.thickness
+        let x = (sw - 340) / 2
+        let y = sy - menuBarHeight - height - 20
+        panel.setFrame(NSRect(x: x, y: y, width: 340, height: height), display: true)
     }
 
     // ── Refresh panel ─────────────────────────────────────────────────────────
