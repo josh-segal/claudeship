@@ -16,6 +16,140 @@ guard args.count > 1 && args[1] == "--daemon" else {
     exit(1)
 }
 
+// ── NSButton closure helper ───────────────────────────────────────────────────
+private var _actionKey = 0
+extension NSButton {
+    func onAction(_ block: @escaping () -> Void) {
+        objc_setAssociatedObject(self, &_actionKey, block, .OBJC_ASSOCIATION_RETAIN)
+        target = self
+        action = #selector(NSButton._runBlock)
+    }
+    @objc fileprivate func _runBlock() {
+        (objc_getAssociatedObject(self, &_actionKey) as? () -> Void)?()
+    }
+}
+
+// ── Clickable row view ────────────────────────────────────────────────────────
+class ClickableRow: NSView {
+    var clickAction: (() -> Void)?
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let ta = trackingArea { removeTrackingArea(ta) }
+        let ta = NSTrackingArea(
+            rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self, userInfo: nil)
+        addTrackingArea(ta)
+        trackingArea = ta
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard clickAction != nil else { return }
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.15).cgColor
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        layer?.backgroundColor = .clear
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        clickAction?()
+    }
+}
+
+// ── Panel content view ────────────────────────────────────────────────────────
+class PanelContentView: NSView {
+    struct Row {
+        var cwd: String
+        var displayName: String
+        var isWorking: Bool
+        var agents: [(id: String, name: String)]
+    }
+
+    private let stack = NSStackView()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func refresh(rows: [Row], onFocus: @escaping (String) -> Void) {
+        stack.arrangedSubviews.forEach {
+            stack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+
+        if rows.isEmpty {
+            let lbl = NSTextField(labelWithString: "No active sessions")
+            lbl.textColor = .secondaryLabelColor
+            lbl.font = .systemFont(ofSize: 13)
+            lbl.translatesAutoresizingMaskIntoConstraints = false
+            stack.addArrangedSubview(lbl)
+            return
+        }
+
+        for row in rows {
+            let bullet = row.isWorking ? "●" : "○"
+            let statusText = row.isWorking ? "working" : "idle"
+            addRow(
+                indent: 0,
+                text: "\(bullet)  \(row.displayName)  —  \(statusText)",
+                color: row.isWorking ? .labelColor : .secondaryLabelColor,
+                cwd: row.cwd,
+                onFocus: onFocus
+            )
+            for agent in row.agents {
+                addRow(
+                    indent: 16,
+                    text: "↳  \(agent.name.isEmpty ? "subagent" : agent.name)",
+                    color: .tertiaryLabelColor,
+                    cwd: row.cwd,
+                    onFocus: onFocus
+                )
+            }
+        }
+    }
+
+    private func addRow(
+        indent: CGFloat, text: String, color: NSColor,
+        cwd: String, onFocus: @escaping (String) -> Void
+    ) {
+        let row = ClickableRow()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        if !cwd.isEmpty { row.clickAction = { onFocus(cwd) } }
+
+        let lbl = NSTextField(labelWithString: text)
+        lbl.textColor = color
+        lbl.font = .systemFont(ofSize: 13)
+        lbl.lineBreakMode = .byTruncatingTail
+        lbl.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(lbl)
+
+        NSLayoutConstraint.activate([
+            row.heightAnchor.constraint(equalToConstant: 22),
+            lbl.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: indent),
+            lbl.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            lbl.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor),
+        ])
+
+        stack.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
@@ -44,7 +178,6 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
             let requestId = String(actionId.dropFirst("PERM_deny_".count))
             daemon?.writeReply(requestId: requestId, content: "deny")
         } else if actionId.hasPrefix("CHOICE_") {
-            // Format: CHOICE_{index}_{requestId}  (requestId is always a PID — numeric, no underscores)
             let withoutPrefix = String(actionId.dropFirst("CHOICE_".count))
             if let underscoreIdx = withoutPrefix.firstIndex(of: "_") {
                 let indexStr = String(withoutPrefix[withoutPrefix.startIndex..<underscoreIdx])
@@ -79,13 +212,9 @@ class ClaudeNotifierDaemon: NSObject {
     let delegate = NotificationDelegate()
     var serverSource: DispatchSourceRead?
 
-    // ── Pending input replies (keyed by requestId, mutated on DispatchQueue.main)
-    struct PendingReply {
-        var options: [String]  // option labels for CHOICE_ actions
-    }
+    struct PendingReply { var options: [String] }
     var pendingReplies: [String: PendingReply] = [:]
 
-    // ── Subagent state (all mutations on DispatchQueue.main) ──────────────────
     struct AgentSession {
         var total: Int
         var completed: Int
@@ -93,7 +222,6 @@ class ClaudeNotifierDaemon: NSObject {
     }
     var agentSessions: [String: AgentSession] = [:]
 
-    // ── Session registry (all mutations on DispatchQueue.main) ────────────────
     struct Session {
         var id: String
         var cwd: String
@@ -102,14 +230,56 @@ class ClaudeNotifierDaemon: NSObject {
     }
     var sessions: [String: Session] = [:]
 
-    // ── Menu bar status item ──────────────────────────────────────────────────
+    // ── Status bar ────────────────────────────────────────────────────────────
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     var spinnerTimer: DispatchSourceTimer?
     var spinnerFrame = 0
     let spinnerFrames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
 
+    // ── Panel ─────────────────────────────────────────────────────────────────
+    let panel: NSPanel
+    let panelContent: PanelContentView
+    var globalMonitor: Any?
+
     override init() {
+        let content = PanelContentView(frame: NSRect(x: 0, y: 0, width: 280, height: 60))
+        let p = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 280, height: 60),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        p.level = .popUpMenu
+        p.isFloatingPanel = true
+        p.hidesOnDeactivate = false
+        p.isReleasedWhenClosed = false
+        p.backgroundColor = .clear
+        p.isOpaque = false
+        p.hasShadow = true
+
+        let vev = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 280, height: 60))
+        vev.material = .popover
+        vev.blendingMode = .withinWindow
+        vev.state = .active
+        vev.wantsLayer = true
+        vev.layer?.cornerRadius = 10
+        vev.layer?.masksToBounds = true
+
+        content.translatesAutoresizingMaskIntoConstraints = false
+        vev.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: vev.topAnchor),
+            content.leadingAnchor.constraint(equalTo: vev.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: vev.trailingAnchor),
+            content.bottomAnchor.constraint(equalTo: vev.bottomAnchor),
+        ])
+
+        p.contentView = vev
+        panel = p
+        panelContent = content
+
         super.init()
+
         delegate.daemon = self
         center.delegate = delegate
         registerCategories()
@@ -119,26 +289,77 @@ class ClaudeNotifierDaemon: NSObject {
         startListening()
     }
 
-    func setupStatusItem() {
-        updateStatusTitle()
-        rebuildMenu()
+    deinit {
+        if let m = globalMonitor { NSEvent.removeMonitor(m) }
     }
 
-    func updateStatusTitle() {
-        let total = sessions.count
-        let working = sessions.values.filter { $0.isWorking }.count
-        if total == 0 {
-            statusItem.button?.title = "✳ claudeship"
-        } else if working == 0 {
-            statusItem.button?.title = "✳ \(total) claudeship"
-        } else {
-            statusItem.button?.title =
-                "\(spinnerFrames[spinnerFrame]) \(working)/\(total) claudeship"
+    // ── Status item ───────────────────────────────────────────────────────────
+    func setupStatusItem() {
+        updateStatusTitle()
+        statusItem.menu = nil
+        if let btn = statusItem.button {
+            btn.target = self
+            btn.action = #selector(togglePanel(_:))
+            btn.sendAction(on: .leftMouseDown)
+        }
+
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            guard let self = self, self.panel.isVisible else { return }
+            // If the click landed on the status button, let togglePanel handle it
+            if let btn = self.statusItem.button, let win = btn.window {
+                let inWin = btn.convert(btn.bounds, to: nil)
+                let onScreen = win.convertToScreen(inWin)
+                if onScreen.contains(NSEvent.mouseLocation) { return }
+            }
+            // If the click landed inside the panel, don't dismiss
+            if self.panel.frame.contains(NSEvent.mouseLocation) { return }
+            self.panel.orderOut(nil)
         }
     }
 
-    @objc func focusSession(_ sender: NSMenuItem) {
-        guard let cwd = sender.representedObject as? String, !cwd.isEmpty else { return }
+    @objc func togglePanel(_ sender: NSStatusBarButton) {
+        if panel.isVisible {
+            panel.orderOut(nil)
+        } else {
+            refresh()
+            positionPanel()
+            panel.orderFrontRegardless()
+        }
+    }
+
+    func positionPanel() {
+        guard let btn = statusItem.button, let win = btn.window else { return }
+        let inWin = btn.convert(btn.bounds, to: nil)
+        let onScreen = win.convertToScreen(inWin)
+        panelContent.layoutSubtreeIfNeeded()
+        let height = panelContent.fittingSize.height
+        panel.setFrame(
+            NSRect(x: onScreen.minX, y: onScreen.minY - height, width: 280, height: height),
+            display: true
+        )
+    }
+
+    // ── Refresh panel ─────────────────────────────────────────────────────────
+    func refresh() {
+        let sorted = sessions.values.sorted { $0.displayName < $1.displayName }
+        let rows = sorted.map { s in
+            PanelContentView.Row(
+                cwd: s.cwd,
+                displayName: s.displayName,
+                isWorking: s.isWorking,
+                agents: agentSessions[s.id]?.agents ?? []
+            )
+        }
+        panelContent.refresh(rows: rows) { [weak self] cwd in
+            self?.focusGhostty(cwd: cwd)
+        }
+        if panel.isVisible { positionPanel() }
+    }
+
+    func focusGhostty(cwd: String) {
+        guard !cwd.isEmpty else { return }
         let script = """
             tell application "Ghostty"
                 set matches to every terminal whose working directory contains "\(cwd)"
@@ -151,36 +372,17 @@ class ClaudeNotifierDaemon: NSObject {
         try? proc.run()
     }
 
-    func rebuildMenu() {
-        let menu = NSMenu()
-        let sorted = sessions.values.sorted { $0.displayName < $1.displayName }
-
-        if sorted.isEmpty {
-            menu.addItem(NSMenuItem(title: "No active sessions", action: nil, keyEquivalent: ""))
+    // ── Spinner ───────────────────────────────────────────────────────────────
+    func updateStatusTitle() {
+        let total = sessions.count
+        let working = sessions.values.filter { $0.isWorking }.count
+        if total == 0 {
+            statusItem.button?.title = "✳ claudeship"
+        } else if working == 0 {
+            statusItem.button?.title = "✳ \(total) claudeship"
         } else {
-            for session in sorted {
-                let bullet = session.isWorking ? "●" : "○"
-                let status = session.isWorking ? "working" : "idle"
-                let item = NSMenuItem(
-                    title: "\(bullet)  \(session.displayName)  —  \(status)",
-                    action: #selector(focusSession(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = session.cwd
-                menu.addItem(item)
-
-                if let agentSession = agentSessions[session.id] {
-                    for agent in agentSession.agents {
-                        let agentItem = NSMenuItem(
-                            title: agent.name.isEmpty ? "subagent" : agent.name,
-                            action: nil, keyEquivalent: "")
-                        agentItem.indentationLevel = 1
-                        menu.addItem(agentItem)
-                    }
-                }
-            }
+            statusItem.button?.title = "\(spinnerFrames[spinnerFrame]) \(working)/\(total) claudeship"
         }
-
-        statusItem.menu = menu
     }
 
     func updateSpinnerTimer() {
@@ -204,10 +406,9 @@ class ClaudeNotifierDaemon: NSObject {
 
     // ── Log rotation ──────────────────────────────────────────────────────────
     func rotateLogIfNeeded() {
-        let limit = 1_048_576  // 1 MB
+        let limit = 1_048_576
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: logPath),
-            let size = attrs[.size] as? Int,
-            size > limit
+            let size = attrs[.size] as? Int, size > limit
         else { return }
         let backup = logPath + ".1"
         try? FileManager.default.removeItem(atPath: backup)
@@ -218,11 +419,9 @@ class ClaudeNotifierDaemon: NSObject {
     // ── Notification categories ───────────────────────────────────────────────
     func registerCategories() {
         let openAction = UNNotificationAction(
-            identifier: "OPEN_TERMINAL",
-            title: "Open Terminal", options: [])
+            identifier: "OPEN_TERMINAL", title: "Open Terminal", options: [])
         let category = UNNotificationCategory(
-            identifier: "CLAUDE_ACTION",
-            actions: [openAction],
+            identifier: "CLAUDE_ACTION", actions: [openAction],
             intentIdentifiers: [], options: [])
         center.setNotificationCategories([category])
     }
@@ -333,13 +532,12 @@ class ClaudeNotifierDaemon: NSObject {
             let sound = json["sound"] as? String ?? "Ping"
             DispatchQueue.main.async { [weak self] in
                 self?.postNotification(
-                    title: title, message: message,
-                    subtitle: subtitle, sound: sound)
+                    title: title, message: message, subtitle: subtitle, sound: sound)
             }
         }
     }
 
-    // ── Session registry handlers (all on DispatchQueue.main) ───────────────
+    // ── Session handlers ──────────────────────────────────────────────────────
     func handleSessionRegister(_ json: [String: Any]) {
         guard let sessionId = json["session_id"] as? String else { return }
         let cwd = json["cwd"] as? String ?? ""
@@ -352,20 +550,19 @@ class ClaudeNotifierDaemon: NSObject {
         sessions[sessionId] = Session(
             id: sessionId, cwd: cwd, displayName: displayName, isWorking: false)
         updateStatusTitle()
-        rebuildMenu()
+        refresh()
     }
 
     func handleSessionWorking(_ json: [String: Any]) {
         guard let sessionId = json["session_id"] as? String else { return }
         if sessions[sessionId] == nil {
-            // Session registered before daemon knew about it — add with unknown name
             sessions[sessionId] = Session(
                 id: sessionId, cwd: "", displayName: String(sessionId.prefix(8)), isWorking: false)
         }
         sessions[sessionId]!.isWorking = true
         updateStatusTitle()
         updateSpinnerTimer()
-        rebuildMenu()
+        refresh()
     }
 
     func handleSessionEnd(_ json: [String: Any]) {
@@ -376,133 +573,25 @@ class ClaudeNotifierDaemon: NSObject {
         agentSessions.removeValue(forKey: sessionId)
         updateStatusTitle()
         updateSpinnerTimer()
-        rebuildMenu()
+        refresh()
     }
 
-    // ── Permission request (Allow Once / Allow Always / Deny) ────────────────
-    func handlePermissionRequest(_ json: [String: Any]) {
-        guard let requestId = json["request_id"] as? String else {
-            print("daemon: permission_request missing request_id")
-            return
-        }
-        let toolName = json["tool_name"] as? String ?? "a tool"
-        let subtitle = json["subtitle"] as? String ?? ""
+    func handleSessionStop(_ json: [String: Any]) {
+        guard let sessionId = json["session_id"] as? String else { return }
         let ts = ISO8601DateFormatter().string(from: Date())
-        print("[\(ts)] daemon: permission_request id=\(requestId) tool=\(toolName)")
-
-        let categoryId = "CLAUDE_PERM_\(requestId)"
-        let allowOnce = UNNotificationAction(
-            identifier: "PERM_allow_once_\(requestId)",
-            title: "Allow", options: [])
-        let allowAlways = UNNotificationAction(
-            identifier: "PERM_allow_always_\(requestId)",
-            title: "Allow Always", options: [])
-        let deny = UNNotificationAction(
-            identifier: "PERM_deny_\(requestId)",
-            title: "Deny", options: [.destructive])
-        let category = UNNotificationCategory(
-            identifier: categoryId,
-            actions: [allowOnce, allowAlways, deny],
-            intentIdentifiers: [], options: [])
-        registerAndPost(category: category) { [weak self] in
-            self?.pendingReplies[requestId] = PendingReply(options: [])
-            self?.postInputNotification(
-                title: "Permission Needed",
-                message: toolName,
-                subtitle: subtitle,
-                categoryId: categoryId,
-                requestId: requestId)
+        if agentSessions.removeValue(forKey: sessionId) != nil {
+            print("[\(ts)] daemon: cleared subagent state for session \(sessionId)")
         }
+        if sessions[sessionId] != nil {
+            sessions[sessionId]!.isWorking = false
+            print("[\(ts)] daemon: session idle id=\(sessionId)")
+        }
+        updateStatusTitle()
+        updateSpinnerTimer()
+        refresh()
     }
 
-    // ── Input question (dynamic option buttons) ───────────────────────────────
-    func handleInputQuestion(_ json: [String: Any]) {
-        guard let requestId = json["request_id"] as? String,
-            let options = json["options"] as? [String],
-            !options.isEmpty
-        else {
-            print("daemon: input_question missing required fields")
-            return
-        }
-        let question = json["question"] as? String ?? "Claude needs your input"
-        let subtitle = json["subtitle"] as? String ?? ""
-        let ts = ISO8601DateFormatter().string(from: Date())
-        print("[\(ts)] daemon: input_question id=\(requestId) options=\(options)")
-
-        let categoryId = "CLAUDE_INPUT_\(requestId)"
-        let actions = options.enumerated().map { (i, label) in
-            UNNotificationAction(
-                identifier: "CHOICE_\(i)_\(requestId)",
-                title: label, options: [])
-        }
-        let category = UNNotificationCategory(
-            identifier: categoryId,
-            actions: actions,
-            intentIdentifiers: [], options: [])
-        registerAndPost(category: category) { [weak self] in
-            self?.pendingReplies[requestId] = PendingReply(options: options)
-            self?.postInputNotification(
-                title: "Claude Code",
-                message: question,
-                subtitle: subtitle,
-                categoryId: categoryId,
-                requestId: requestId)
-        }
-    }
-
-    // ── Register a new category then post ─────────────────────────────────────
-    func registerAndPost(category: UNNotificationCategory, then callback: @escaping () -> Void) {
-        center.getNotificationCategories { [weak self] existing in
-            guard let self = self else { return }
-            var cats = existing
-            cats.insert(category)
-            self.center.setNotificationCategories(cats)
-            // Brief delay so category registration takes effect before posting
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { callback() }
-        }
-    }
-
-    // ── Write reply file (polled by the hook script) ───────────────────────────
-    func writeReply(requestId: String, content: String) {
-        let replyPath = "/tmp/claude-input-reply-\(requestId)"
-        do {
-            try content.write(toFile: replyPath, atomically: true, encoding: .utf8)
-            let ts = ISO8601DateFormatter().string(from: Date())
-            print("[\(ts)] daemon: wrote reply '\(content)' → \(replyPath)")
-        } catch {
-            fputs("daemon: failed to write reply: \(error.localizedDescription)\n", stderr)
-        }
-        pendingReplies.removeValue(forKey: requestId)
-    }
-
-    // ── Post an actionable (input/permission) notification ────────────────────
-    func postInputNotification(
-        title: String, message: String, subtitle: String,
-        categoryId: String, requestId: String
-    ) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = message
-        if !subtitle.isEmpty { content.subtitle = subtitle }
-        content.sound = UNNotificationSound(named: UNNotificationSoundName("Ping.aiff"))
-        content.categoryIdentifier = categoryId
-        content.interruptionLevel = .timeSensitive
-
-        let request = UNNotificationRequest(
-            identifier: "input-\(requestId)",
-            content: content, trigger: nil)
-        let ts = ISO8601DateFormatter().string(from: Date())
-        print("[\(ts)] daemon: posting input notification category=\(categoryId)")
-        center.add(request) { error in
-            if let error = error {
-                fputs(
-                    "daemon: failed to post input notification: \(error.localizedDescription)\n",
-                    stderr)
-            }
-        }
-    }
-
-    // ── Subagent lifecycle handlers (all on DispatchQueue.main) ───────────────
+    // ── Subagent handlers ─────────────────────────────────────────────────────
     func handleSubagentStart(_ json: [String: Any]) {
         guard let parentId = json["parent_session_id"] as? String,
             let agentId = json["session_id"] as? String
@@ -515,13 +604,12 @@ class ClaudeNotifierDaemon: NSObject {
         print(
             "[\(ts)] daemon: subagent_start parent=\(parentId) agent=\(agentId) name='\(agentName)'"
         )
-
         if agentSessions[parentId] == nil {
             agentSessions[parentId] = AgentSession(total: 0, completed: 0, agents: [])
         }
         agentSessions[parentId]!.total += 1
         agentSessions[parentId]!.agents.append((id: agentId, name: agentName))
-        rebuildMenu()
+        refresh()
     }
 
     func handleSubagentStop(_ json: [String: Any]) {
@@ -542,33 +630,118 @@ class ClaudeNotifierDaemon: NSObject {
                 session.agents.remove(at: idx)
             }
             agentSessions[parentId] = session
-
             let progress = "(\(session.completed)/\(session.total))"
             let message = "\(agentName) done \(progress)"
             print("[\(ts)] daemon: \(message) parent=\(parentId)")
             postNotification(title: "Claude Code", message: message, subtitle: "", sound: "Ping")
-            rebuildMenu()
+            refresh()
         } else {
-            // No SubagentStart was tracked — notify without count
             print("[\(ts)] daemon: subagent_stop with no tracked parent \(parentId)")
             postNotification(
                 title: "Claude Code", message: "Subagent done", subtitle: "", sound: "Ping")
         }
     }
 
-    func handleSessionStop(_ json: [String: Any]) {
-        guard let sessionId = json["session_id"] as? String else { return }
+    // ── Permission request ────────────────────────────────────────────────────
+    func handlePermissionRequest(_ json: [String: Any]) {
+        guard let requestId = json["request_id"] as? String else {
+            print("daemon: permission_request missing request_id")
+            return
+        }
+        let toolName = json["tool_name"] as? String ?? "a tool"
+        let subtitle = json["subtitle"] as? String ?? ""
         let ts = ISO8601DateFormatter().string(from: Date())
-        if agentSessions.removeValue(forKey: sessionId) != nil {
-            print("[\(ts)] daemon: cleared subagent state for session \(sessionId)")
+        print("[\(ts)] daemon: permission_request id=\(requestId) tool=\(toolName)")
+
+        let categoryId = "CLAUDE_PERM_\(requestId)"
+        let allowOnce = UNNotificationAction(
+            identifier: "PERM_allow_once_\(requestId)", title: "Allow", options: [])
+        let allowAlways = UNNotificationAction(
+            identifier: "PERM_allow_always_\(requestId)", title: "Allow Always", options: [])
+        let deny = UNNotificationAction(
+            identifier: "PERM_deny_\(requestId)", title: "Deny", options: [.destructive])
+        let category = UNNotificationCategory(
+            identifier: categoryId, actions: [allowOnce, allowAlways, deny],
+            intentIdentifiers: [], options: [])
+        registerAndPost(category: category) { [weak self] in
+            self?.pendingReplies[requestId] = PendingReply(options: [])
+            self?.postInputNotification(
+                title: "Permission Needed", message: toolName, subtitle: subtitle,
+                categoryId: categoryId, requestId: requestId)
         }
-        if sessions[sessionId] != nil {
-            sessions[sessionId]!.isWorking = false
-            print("[\(ts)] daemon: session idle id=\(sessionId)")
+    }
+
+    // ── Input question ────────────────────────────────────────────────────────
+    func handleInputQuestion(_ json: [String: Any]) {
+        guard let requestId = json["request_id"] as? String,
+            let options = json["options"] as? [String], !options.isEmpty
+        else {
+            print("daemon: input_question missing required fields")
+            return
         }
-        updateStatusTitle()
-        updateSpinnerTimer()
-        rebuildMenu()
+        let question = json["question"] as? String ?? "Claude needs your input"
+        let subtitle = json["subtitle"] as? String ?? ""
+        let ts = ISO8601DateFormatter().string(from: Date())
+        print("[\(ts)] daemon: input_question id=\(requestId) options=\(options)")
+
+        let categoryId = "CLAUDE_INPUT_\(requestId)"
+        let actions = options.enumerated().map { i, label in
+            UNNotificationAction(identifier: "CHOICE_\(i)_\(requestId)", title: label, options: [])
+        }
+        let category = UNNotificationCategory(
+            identifier: categoryId, actions: actions, intentIdentifiers: [], options: [])
+        registerAndPost(category: category) { [weak self] in
+            self?.pendingReplies[requestId] = PendingReply(options: options)
+            self?.postInputNotification(
+                title: "Claude Code", message: question, subtitle: subtitle,
+                categoryId: categoryId, requestId: requestId)
+        }
+    }
+
+    func registerAndPost(category: UNNotificationCategory, then callback: @escaping () -> Void) {
+        center.getNotificationCategories { [weak self] existing in
+            guard let self = self else { return }
+            var cats = existing
+            cats.insert(category)
+            self.center.setNotificationCategories(cats)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { callback() }
+        }
+    }
+
+    func writeReply(requestId: String, content: String) {
+        let replyPath = "/tmp/claude-input-reply-\(requestId)"
+        do {
+            try content.write(toFile: replyPath, atomically: true, encoding: .utf8)
+            let ts = ISO8601DateFormatter().string(from: Date())
+            print("[\(ts)] daemon: wrote reply '\(content)' → \(replyPath)")
+        } catch {
+            fputs("daemon: failed to write reply: \(error.localizedDescription)\n", stderr)
+        }
+        pendingReplies.removeValue(forKey: requestId)
+    }
+
+    func postInputNotification(
+        title: String, message: String, subtitle: String,
+        categoryId: String, requestId: String
+    ) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = message
+        if !subtitle.isEmpty { content.subtitle = subtitle }
+        content.sound = UNNotificationSound(named: UNNotificationSoundName("Ping.aiff"))
+        content.categoryIdentifier = categoryId
+        content.interruptionLevel = .timeSensitive
+        let request = UNNotificationRequest(
+            identifier: "input-\(requestId)", content: content, trigger: nil)
+        let ts = ISO8601DateFormatter().string(from: Date())
+        print("[\(ts)] daemon: posting input notification category=\(categoryId)")
+        center.add(request) { error in
+            if let error = error {
+                fputs(
+                    "daemon: failed to post input notification: \(error.localizedDescription)\n",
+                    stderr)
+            }
+        }
     }
 
     // ── Notification posting ──────────────────────────────────────────────────
@@ -580,7 +753,6 @@ class ClaudeNotifierDaemon: NSObject {
         content.sound = UNNotificationSound(named: UNNotificationSoundName(sound + ".aiff"))
         content.categoryIdentifier = "CLAUDE_ACTION"
         content.interruptionLevel = .timeSensitive
-
         let request = UNNotificationRequest(
             identifier: UUID().uuidString, content: content, trigger: nil)
         let postTs = ISO8601DateFormatter().string(from: Date())

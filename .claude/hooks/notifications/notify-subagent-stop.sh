@@ -22,15 +22,16 @@ try:
 except Exception:
     sys.exit(0)
 
-session_id        = d.get('session_id', '')
-parent_session_id = d.get('parent_session_id', '')
+# 'session_id' in SubagentStop is the PARENT session; 'agent_id' is the subagent's own ID
+parent_session_id = d.get('session_id', '')
+agent_id          = d.get('agent_id', '')
 
-if not session_id or not parent_session_id:
+if not parent_session_id or not agent_id:
     sys.exit(0)
 
 print(json.dumps({
     'type':              'subagent_stop',
-    'session_id':        session_id,
+    'session_id':        agent_id,
     'parent_session_id': parent_session_id
 }))
 " "$input" 2>/dev/null)

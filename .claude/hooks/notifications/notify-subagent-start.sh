@@ -22,23 +22,24 @@ try:
 except Exception:
     sys.exit(0)
 
-session_id        = d.get('session_id', '')
-parent_session_id = d.get('parent_session_id', '')
+# 'session_id' in SubagentStart is the PARENT session; 'agent_id' is the subagent's own ID
+parent_session_id = d.get('session_id', '')
+agent_id          = d.get('agent_id', '')
 
 # Try common locations for the agent description/name
 agent_name = (
     d.get('tool_input', {}).get('description', '') or
     d.get('input', {}).get('description', '')       or
-    d.get('agent_name', '')                          or
+    d.get('agent_type', '')                          or
     ''
 )
 
-if not session_id or not parent_session_id:
+if not parent_session_id or not agent_id:
     sys.exit(0)
 
 print(json.dumps({
     'type':              'subagent_start',
-    'session_id':        session_id,
+    'session_id':        agent_id,
     'parent_session_id': parent_session_id,
     'agent_name':        agent_name
 }))
