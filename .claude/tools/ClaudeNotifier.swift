@@ -1,5 +1,4 @@
 import Cocoa
-import UserNotifications
 
 let args = CommandLine.arguments
 
@@ -60,10 +59,20 @@ class ClickableRow: NSView {
 
 // ── Panel content view ────────────────────────────────────────────────────────
 class PanelContentView: NSView {
+    struct InputRow {
+        var requestId: String
+        var question: String
+        var options: [String]
+        var sessionName: String
+    }
+
     struct Row {
         var cwd: String
         var displayName: String
         var isWorking: Bool
+        var currentTool: String?
+        var currentCommand: String?
+        var isDone: Bool
         var agents: [(id: String, name: String)]
     }
 
@@ -86,13 +95,117 @@ class PanelContentView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func refresh(rows: [Row], onFocus: @escaping (String) -> Void) {
+    func refresh(
+        inputs: [InputRow],
+        rows: [Row],
+        onFocus: @escaping (String) -> Void,
+        onAnswer: @escaping (String, String) -> Void
+    ) {
         stack.arrangedSubviews.forEach {
             stack.removeArrangedSubview($0)
             $0.removeFromSuperview()
         }
 
-        if rows.isEmpty {
+        // ── Section A: Pending inputs ─────────────────────────────────────────
+        if !inputs.isEmpty {
+            for input in inputs {
+                // Question label
+                let labelText = "⚡  \(input.question)  (\(input.sessionName))"
+                let lbl = NSTextField(labelWithString: labelText)
+                lbl.textColor = .labelColor
+                lbl.font = .systemFont(ofSize: 13)
+                lbl.lineBreakMode = .byTruncatingTail
+                lbl.translatesAutoresizingMaskIntoConstraints = false
+                let lblRow = NSView()
+                lblRow.translatesAutoresizingMaskIntoConstraints = false
+                lblRow.addSubview(lbl)
+                NSLayoutConstraint.activate([
+                    lblRow.heightAnchor.constraint(equalToConstant: 22),
+                    lbl.leadingAnchor.constraint(equalTo: lblRow.leadingAnchor),
+                    lbl.centerYAnchor.constraint(equalTo: lblRow.centerYAnchor),
+                    lbl.trailingAnchor.constraint(lessThanOrEqualTo: lblRow.trailingAnchor),
+                ])
+                stack.addArrangedSubview(lblRow)
+                lblRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+                // Button row
+                let btnStack = NSStackView()
+                btnStack.orientation = .horizontal
+                btnStack.alignment = .centerY
+                btnStack.spacing = 6
+                btnStack.translatesAutoresizingMaskIntoConstraints = false
+
+                for (idx, optionLabel) in input.options.enumerated() {
+                    let btn = NSButton(title: optionLabel, target: nil, action: nil)
+                    btn.bezelStyle = .rounded
+                    btn.font = .systemFont(ofSize: 12)
+                    btn.lineBreakMode = .byTruncatingTail
+                    // Last button is destructive
+                    if idx == input.options.count - 1 {
+                        btn.bezelColor = NSColor.systemRed
+                    }
+                    let rid = input.requestId
+                    let label = optionLabel
+                    btn.onAction { onAnswer(rid, label) }
+                    btnStack.addArrangedSubview(btn)
+                }
+
+                let btnRow = NSView()
+                btnRow.translatesAutoresizingMaskIntoConstraints = false
+                btnRow.addSubview(btnStack)
+                NSLayoutConstraint.activate([
+                    btnRow.heightAnchor.constraint(equalToConstant: 28),
+                    btnStack.leadingAnchor.constraint(equalTo: btnRow.leadingAnchor),
+                    btnStack.centerYAnchor.constraint(equalTo: btnRow.centerYAnchor),
+                    btnStack.trailingAnchor.constraint(lessThanOrEqualTo: btnRow.trailingAnchor),
+                ])
+                stack.addArrangedSubview(btnRow)
+                btnRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            }
+
+            // Separator after input section
+            addSeparator()
+        }
+
+        // ── Section B: Done sessions ──────────────────────────────────────────
+        let doneSessions = rows.filter { $0.isDone }
+        if !doneSessions.isEmpty {
+            for row in doneSessions {
+                // Done label
+                let doneLbl = NSTextField(labelWithString: "✓  \(row.displayName)  —  Done")
+                doneLbl.textColor = .labelColor
+                doneLbl.font = .systemFont(ofSize: 13)
+                doneLbl.lineBreakMode = .byTruncatingTail
+                doneLbl.translatesAutoresizingMaskIntoConstraints = false
+                let doneRow = NSView()
+                doneRow.translatesAutoresizingMaskIntoConstraints = false
+                doneRow.addSubview(doneLbl)
+                NSLayoutConstraint.activate([
+                    doneRow.heightAnchor.constraint(equalToConstant: 22),
+                    doneLbl.leadingAnchor.constraint(equalTo: doneRow.leadingAnchor),
+                    doneLbl.centerYAnchor.constraint(equalTo: doneRow.centerYAnchor),
+                    doneLbl.trailingAnchor.constraint(lessThanOrEqualTo: doneRow.trailingAnchor),
+                ])
+                stack.addArrangedSubview(doneRow)
+                doneRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+                // Focus Terminal clickable row (indented)
+                addRow(
+                    indent: 16,
+                    text: "Focus Terminal",
+                    color: .secondaryLabelColor,
+                    cwd: row.cwd,
+                    onFocus: onFocus
+                )
+            }
+
+            // Separator after done section
+            addSeparator()
+        }
+
+        // ── Section C: Active sessions ────────────────────────────────────────
+        let activeSessions = rows.filter { !$0.isDone }
+        if activeSessions.isEmpty && inputs.isEmpty && doneSessions.isEmpty {
             let lbl = NSTextField(labelWithString: "No active sessions")
             lbl.textColor = .secondaryLabelColor
             lbl.font = .systemFont(ofSize: 13)
@@ -101,16 +214,22 @@ class PanelContentView: NSView {
             return
         }
 
-        for row in rows {
-            let bullet = row.isWorking ? "●" : "○"
-            let statusText = row.isWorking ? "working" : "idle"
-            addRow(
-                indent: 0,
-                text: "\(bullet)  \(row.displayName)  —  \(statusText)",
-                color: row.isWorking ? .labelColor : .secondaryLabelColor,
-                cwd: row.cwd,
-                onFocus: onFocus
-            )
+        for row in activeSessions {
+            let text: String
+            let color: NSColor
+            if row.isWorking {
+                if let tool = row.currentTool {
+                    let cmd = row.currentCommand.map { " \($0)" } ?? ""
+                    text = "⣷  \(row.displayName)  —  \(tool):\(cmd)"
+                } else {
+                    text = "⣷  \(row.displayName)  —  working"
+                }
+                color = .labelColor
+            } else {
+                text = "○  \(row.displayName)  —  idle"
+                color = .secondaryLabelColor
+            }
+            addRow(indent: 0, text: text, color: color, cwd: row.cwd, onFocus: onFocus)
             for agent in row.agents {
                 addRow(
                     indent: 16,
@@ -121,6 +240,14 @@ class PanelContentView: NSView {
                 )
             }
         }
+    }
+
+    private func addSeparator() {
+        let sep = NSBox()
+        sep.boxType = .separator
+        sep.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(sep)
+        sep.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
 
     private func addRow(
@@ -152,68 +279,20 @@ class PanelContentView: NSView {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
-    weak var daemon: ClaudeNotifierDaemon?
-
-    func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse,
-        withCompletionHandler completionHandler: @escaping () -> Void
-    ) {
-        let actionId = response.actionIdentifier
-
-        if actionId == "OPEN_TERMINAL" {
-            if let app = NSRunningApplication.runningApplications(
-                withBundleIdentifier: "com.mitchellh.ghostty"
-            ).first {
-                app.activate(options: [.activateAllWindows])
-            }
-        } else if actionId.hasPrefix("PERM_allow_always_") {
-            let requestId = String(actionId.dropFirst("PERM_allow_always_".count))
-            daemon?.writeReply(requestId: requestId, content: "allow_always")
-        } else if actionId.hasPrefix("PERM_allow_once_") {
-            let requestId = String(actionId.dropFirst("PERM_allow_once_".count))
-            daemon?.writeReply(requestId: requestId, content: "allow")
-        } else if actionId.hasPrefix("PERM_deny_") {
-            let requestId = String(actionId.dropFirst("PERM_deny_".count))
-            daemon?.writeReply(requestId: requestId, content: "deny")
-        } else if actionId.hasPrefix("CHOICE_") {
-            let withoutPrefix = String(actionId.dropFirst("CHOICE_".count))
-            if let underscoreIdx = withoutPrefix.firstIndex(of: "_") {
-                let indexStr = String(withoutPrefix[withoutPrefix.startIndex..<underscoreIdx])
-                let requestId = String(withoutPrefix[withoutPrefix.index(after: underscoreIdx)...])
-                if let idx = Int(indexStr),
-                    let pending = daemon?.pendingReplies[requestId],
-                    idx < pending.options.count
-                {
-                    daemon?.writeReply(requestId: requestId, content: pending.options[idx])
-                }
-            }
-        }
-
-        completionHandler()
-    }
-
-    func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification,
-        withCompletionHandler completionHandler:
-            @escaping (UNNotificationPresentationOptions) -> Void
-    ) {
-        completionHandler([.banner, .sound])
-    }
-}
-
 class ClaudeNotifierDaemon: NSObject {
-    let center = UNUserNotificationCenter.current()
     let socketQueue = DispatchQueue(label: "com.claudeship.notifier.socket")
     let socketPath = "/tmp/claude-notifier.sock"
     let logPath = "/tmp/claude-notifier.log"
-    let delegate = NotificationDelegate()
     var serverSource: DispatchSourceRead?
 
-    struct PendingReply { var options: [String] }
-    var pendingReplies: [String: PendingReply] = [:]
+    struct PendingInput {
+        var requestId: String
+        var question: String
+        var options: [String]
+        var sessionName: String
+        var sessionId: String?
+    }
+    var pendingInputs: [String: PendingInput] = [:]
 
     struct AgentSession {
         var total: Int
@@ -227,6 +306,10 @@ class ClaudeNotifierDaemon: NSObject {
         var cwd: String
         var displayName: String
         var isWorking: Bool
+        var currentTool: String?
+        var currentCommand: String?
+        var isDone: Bool
+        var doneAt: Date?
     }
     var sessions: [String: Session] = [:]
 
@@ -236,15 +319,18 @@ class ClaudeNotifierDaemon: NSObject {
     var spinnerFrame = 0
     let spinnerFrames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
 
+    // Track most recently active working session for status bar display
+    var lastWorkingSessionId: String?
+
     // ── Panel ─────────────────────────────────────────────────────────────────
     let panel: NSPanel
     let panelContent: PanelContentView
     var globalMonitor: Any?
 
     override init() {
-        let content = PanelContentView(frame: NSRect(x: 0, y: 0, width: 280, height: 60))
+        let content = PanelContentView(frame: NSRect(x: 0, y: 0, width: 340, height: 60))
         let p = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 280, height: 60),
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 60),
             styleMask: [.nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -257,9 +343,9 @@ class ClaudeNotifierDaemon: NSObject {
         p.isOpaque = false
         p.hasShadow = true
 
-        let vev = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 280, height: 60))
+        let vev = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 340, height: 60))
         vev.material = .popover
-        vev.blendingMode = .withinWindow
+        vev.blendingMode = .behindWindow
         vev.state = .active
         vev.wantsLayer = true
         vev.layer?.cornerRadius = 10
@@ -280,11 +366,7 @@ class ClaudeNotifierDaemon: NSObject {
 
         super.init()
 
-        delegate.daemon = self
-        center.delegate = delegate
-        registerCategories()
         rotateLogIfNeeded()
-        requestAuth()
         setupStatusItem()
         startListening()
     }
@@ -336,25 +418,30 @@ class ClaudeNotifierDaemon: NSObject {
         panelContent.layoutSubtreeIfNeeded()
         let height = panelContent.fittingSize.height
         panel.setFrame(
-            NSRect(x: onScreen.minX, y: onScreen.minY - height, width: 280, height: height),
+            NSRect(x: onScreen.minX, y: onScreen.minY - height, width: 340, height: height),
             display: true
         )
     }
 
     // ── Refresh panel ─────────────────────────────────────────────────────────
     func refresh() {
-        let sorted = sessions.values.sorted { $0.displayName < $1.displayName }
-        let rows = sorted.map { s in
+        let inputs = pendingInputs.values.sorted { $0.question < $1.question }.map { p in
+            PanelContentView.InputRow(
+                requestId: p.requestId, question: p.question,
+                options: p.options, sessionName: p.sessionName)
+        }
+        let rows = sessions.values.sorted { $0.displayName < $1.displayName }.map { s in
             PanelContentView.Row(
-                cwd: s.cwd,
-                displayName: s.displayName,
-                isWorking: s.isWorking,
-                agents: agentSessions[s.id]?.agents ?? []
-            )
+                cwd: s.cwd, displayName: s.displayName, isWorking: s.isWorking,
+                currentTool: s.currentTool, currentCommand: s.currentCommand,
+                isDone: s.isDone, agents: agentSessions[s.id]?.agents ?? [])
         }
-        panelContent.refresh(rows: rows) { [weak self] cwd in
-            self?.focusGhostty(cwd: cwd)
-        }
+        panelContent.refresh(
+            inputs: inputs, rows: rows,
+            onFocus: { [weak self] cwd in self?.focusGhostty(cwd: cwd) },
+            onAnswer: { [weak self] requestId, chosen in
+                self?.writeReply(requestId: requestId, content: chosen)
+            })
         if panel.isVisible { positionPanel() }
     }
 
@@ -372,16 +459,46 @@ class ClaudeNotifierDaemon: NSObject {
         try? proc.run()
     }
 
-    // ── Spinner ───────────────────────────────────────────────────────────────
+    // ── Spinner / status title ────────────────────────────────────────────────
     func updateStatusTitle() {
+        // Priority 1: any pending input
+        if !pendingInputs.isEmpty {
+            statusItem.button?.title = "⚡ claudeship"
+            return
+        }
+
         let total = sessions.count
-        let working = sessions.values.filter { $0.isWorking }.count
+        let workingSessions = sessions.values.filter { $0.isWorking }
+        let working = workingSessions.count
+
+        // Priority 2: any session working
+        if working > 0 {
+            if working == 1, let s = workingSessions.first {
+                // Single working session: show tool and command
+                if let tool = s.currentTool {
+                    let cmd = s.currentCommand.map { " \($0)" } ?? ""
+                    statusItem.button?.title = "\(spinnerFrames[spinnerFrame]) claudeship — \(tool):\(cmd)"
+                } else {
+                    statusItem.button?.title = "\(spinnerFrames[spinnerFrame]) claudeship"
+                }
+            } else {
+                // Multiple working sessions
+                statusItem.button?.title = "\(spinnerFrames[spinnerFrame]) \(working)/\(total) claudeship"
+            }
+            return
+        }
+
+        // Priority 3: recently done, no pending input
+        if sessions.values.contains(where: { $0.isDone }) {
+            statusItem.button?.title = "✓ claudeship"
+            return
+        }
+
+        // Priority 4: idle
         if total == 0 {
             statusItem.button?.title = "✳ claudeship"
-        } else if working == 0 {
-            statusItem.button?.title = "✳ \(total) claudeship"
         } else {
-            statusItem.button?.title = "\(spinnerFrames[spinnerFrame]) \(working)/\(total) claudeship"
+            statusItem.button?.title = "✳ \(total) claudeship"
         }
     }
 
@@ -414,28 +531,6 @@ class ClaudeNotifierDaemon: NSObject {
         try? FileManager.default.removeItem(atPath: backup)
         try? FileManager.default.moveItem(atPath: logPath, toPath: backup)
         print("ClaudeNotifier: rotated log (\(size) bytes → \(backup))")
-    }
-
-    // ── Notification categories ───────────────────────────────────────────────
-    func registerCategories() {
-        let openAction = UNNotificationAction(
-            identifier: "OPEN_TERMINAL", title: "Open Terminal", options: [])
-        let category = UNNotificationCategory(
-            identifier: "CLAUDE_ACTION", actions: [openAction],
-            intentIdentifiers: [], options: [])
-        center.setNotificationCategories([category])
-    }
-
-    func requestAuth() {
-        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            if granted {
-                print("ClaudeNotifier: notifications authorized")
-            } else {
-                fputs(
-                    "ClaudeNotifier: notification permission denied — grant access in System Settings\n",
-                    stderr)
-            }
-        }
     }
 
     // ── Socket listener ───────────────────────────────────────────────────────
@@ -513,6 +608,8 @@ class ClaudeNotifierDaemon: NSObject {
             DispatchQueue.main.async { [weak self] in self?.handleSessionRegister(json) }
         case "session_working":
             DispatchQueue.main.async { [weak self] in self?.handleSessionWorking(json) }
+        case "session_tool":
+            DispatchQueue.main.async { [weak self] in self?.handleSessionTool(json) }
         case "session_end":
             DispatchQueue.main.async { [weak self] in self?.handleSessionEnd(json) }
         case "subagent_start":
@@ -521,19 +618,10 @@ class ClaudeNotifierDaemon: NSObject {
             DispatchQueue.main.async { [weak self] in self?.handleSubagentStop(json) }
         case "turn_stop":
             DispatchQueue.main.async { [weak self] in self?.handleSessionStop(json) }
-        case "permission_request":
-            DispatchQueue.main.async { [weak self] in self?.handlePermissionRequest(json) }
         case "input_question":
             DispatchQueue.main.async { [weak self] in self?.handleInputQuestion(json) }
         default:
-            let title = json["title"] as? String ?? "Claude Code"
-            let message = json["message"] as? String ?? ""
-            let subtitle = json["subtitle"] as? String ?? ""
-            let sound = json["sound"] as? String ?? "Ping"
-            DispatchQueue.main.async { [weak self] in
-                self?.postNotification(
-                    title: title, message: message, subtitle: subtitle, sound: sound)
-            }
+            break
         }
     }
 
@@ -548,7 +636,8 @@ class ClaudeNotifierDaemon: NSObject {
         let ts = ISO8601DateFormatter().string(from: Date())
         print("[\(ts)] daemon: session_register id=\(sessionId) name='\(displayName)'")
         sessions[sessionId] = Session(
-            id: sessionId, cwd: cwd, displayName: displayName, isWorking: false)
+            id: sessionId, cwd: cwd, displayName: displayName, isWorking: false,
+            currentTool: nil, currentCommand: nil, isDone: false, doneAt: nil)
         updateStatusTitle()
         refresh()
     }
@@ -557,12 +646,23 @@ class ClaudeNotifierDaemon: NSObject {
         guard let sessionId = json["session_id"] as? String else { return }
         if sessions[sessionId] == nil {
             sessions[sessionId] = Session(
-                id: sessionId, cwd: "", displayName: String(sessionId.prefix(8)), isWorking: false)
+                id: sessionId, cwd: "", displayName: String(sessionId.prefix(8)), isWorking: false,
+                currentTool: nil, currentCommand: nil, isDone: false, doneAt: nil)
         }
         sessions[sessionId]!.isWorking = true
+        sessions[sessionId]!.isDone = false
+        lastWorkingSessionId = sessionId
         updateStatusTitle()
         updateSpinnerTimer()
         refresh()
+    }
+
+    func handleSessionTool(_ json: [String: Any]) {
+        guard let sessionId = json["session_id"] as? String else { return }
+        sessions[sessionId]?.currentTool = json["tool_name"] as? String
+        sessions[sessionId]?.currentCommand = json["command_preview"] as? String
+        updateStatusTitle()
+        if panel.isVisible { refresh() }
     }
 
     func handleSessionEnd(_ json: [String: Any]) {
@@ -571,6 +671,7 @@ class ClaudeNotifierDaemon: NSObject {
         print("[\(ts)] daemon: session_end id=\(sessionId)")
         sessions.removeValue(forKey: sessionId)
         agentSessions.removeValue(forKey: sessionId)
+        if lastWorkingSessionId == sessionId { lastWorkingSessionId = nil }
         updateStatusTitle()
         updateSpinnerTimer()
         refresh()
@@ -584,11 +685,29 @@ class ClaudeNotifierDaemon: NSObject {
         }
         if sessions[sessionId] != nil {
             sessions[sessionId]!.isWorking = false
-            print("[\(ts)] daemon: session idle id=\(sessionId)")
+            sessions[sessionId]!.currentTool = nil
+            sessions[sessionId]!.currentCommand = nil
+            sessions[sessionId]!.isDone = true
+            sessions[sessionId]!.doneAt = Date()
+            print("[\(ts)] daemon: session done id=\(sessionId)")
         }
         updateStatusTitle()
         updateSpinnerTimer()
+
+        // Auto-clear done state after 8 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self = self else { return }
+            self.sessions[sessionId]?.isDone = false
+            self.updateStatusTitle()
+            self.refresh()
+            // Auto-close panel if nothing pending
+            if self.pendingInputs.isEmpty { self.panel.orderOut(nil) }
+        }
+
+        // Auto-open panel
         refresh()
+        positionPanel()
+        panel.orderFrontRegardless()
     }
 
     // ── Subagent handlers ─────────────────────────────────────────────────────
@@ -633,41 +752,9 @@ class ClaudeNotifierDaemon: NSObject {
             let progress = "(\(session.completed)/\(session.total))"
             let message = "\(agentName) done \(progress)"
             print("[\(ts)] daemon: \(message) parent=\(parentId)")
-            postNotification(title: "Claude Code", message: message, subtitle: "", sound: "Ping")
             refresh()
         } else {
             print("[\(ts)] daemon: subagent_stop with no tracked parent \(parentId)")
-            postNotification(
-                title: "Claude Code", message: "Subagent done", subtitle: "", sound: "Ping")
-        }
-    }
-
-    // ── Permission request ────────────────────────────────────────────────────
-    func handlePermissionRequest(_ json: [String: Any]) {
-        guard let requestId = json["request_id"] as? String else {
-            print("daemon: permission_request missing request_id")
-            return
-        }
-        let toolName = json["tool_name"] as? String ?? "a tool"
-        let subtitle = json["subtitle"] as? String ?? ""
-        let ts = ISO8601DateFormatter().string(from: Date())
-        print("[\(ts)] daemon: permission_request id=\(requestId) tool=\(toolName)")
-
-        let categoryId = "CLAUDE_PERM_\(requestId)"
-        let allowOnce = UNNotificationAction(
-            identifier: "PERM_allow_once_\(requestId)", title: "Allow", options: [])
-        let allowAlways = UNNotificationAction(
-            identifier: "PERM_allow_always_\(requestId)", title: "Allow Always", options: [])
-        let deny = UNNotificationAction(
-            identifier: "PERM_deny_\(requestId)", title: "Deny", options: [.destructive])
-        let category = UNNotificationCategory(
-            identifier: categoryId, actions: [allowOnce, allowAlways, deny],
-            intentIdentifiers: [], options: [])
-        registerAndPost(category: category) { [weak self] in
-            self?.pendingReplies[requestId] = PendingReply(options: [])
-            self?.postInputNotification(
-                title: "Permission Needed", message: toolName, subtitle: subtitle,
-                categoryId: categoryId, requestId: requestId)
         }
     }
 
@@ -680,32 +767,22 @@ class ClaudeNotifierDaemon: NSObject {
             return
         }
         let question = json["question"] as? String ?? "Claude needs your input"
-        let subtitle = json["subtitle"] as? String ?? ""
         let ts = ISO8601DateFormatter().string(from: Date())
         print("[\(ts)] daemon: input_question id=\(requestId) options=\(options)")
 
-        let categoryId = "CLAUDE_INPUT_\(requestId)"
-        let actions = options.enumerated().map { i, label in
-            UNNotificationAction(identifier: "CHOICE_\(i)_\(requestId)", title: label, options: [])
-        }
-        let category = UNNotificationCategory(
-            identifier: categoryId, actions: actions, intentIdentifiers: [], options: [])
-        registerAndPost(category: category) { [weak self] in
-            self?.pendingReplies[requestId] = PendingReply(options: options)
-            self?.postInputNotification(
-                title: "Claude Code", message: question, subtitle: subtitle,
-                categoryId: categoryId, requestId: requestId)
-        }
-    }
+        let sessionId = json["session_id"] as? String
+        let sessionName = sessionId.flatMap { sessions[$0]?.displayName }
+            ?? (json["subtitle"] as? String ?? "")
 
-    func registerAndPost(category: UNNotificationCategory, then callback: @escaping () -> Void) {
-        center.getNotificationCategories { [weak self] existing in
-            guard let self = self else { return }
-            var cats = existing
-            cats.insert(category)
-            self.center.setNotificationCategories(cats)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { callback() }
-        }
+        pendingInputs[requestId] = PendingInput(
+            requestId: requestId, question: question, options: options,
+            sessionName: sessionName, sessionId: sessionId)
+
+        updateStatusTitle()
+        // Auto-open panel
+        refresh()
+        positionPanel()
+        panel.orderFrontRegardless()
     }
 
     func writeReply(requestId: String, content: String) {
@@ -717,55 +794,15 @@ class ClaudeNotifierDaemon: NSObject {
         } catch {
             fputs("daemon: failed to write reply: \(error.localizedDescription)\n", stderr)
         }
-        pendingReplies.removeValue(forKey: requestId)
-    }
-
-    func postInputNotification(
-        title: String, message: String, subtitle: String,
-        categoryId: String, requestId: String
-    ) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = message
-        if !subtitle.isEmpty { content.subtitle = subtitle }
-        content.sound = UNNotificationSound(named: UNNotificationSoundName("Ping.aiff"))
-        content.categoryIdentifier = categoryId
-        content.interruptionLevel = .timeSensitive
-        let request = UNNotificationRequest(
-            identifier: "input-\(requestId)", content: content, trigger: nil)
-        let ts = ISO8601DateFormatter().string(from: Date())
-        print("[\(ts)] daemon: posting input notification category=\(categoryId)")
-        center.add(request) { error in
-            if let error = error {
-                fputs(
-                    "daemon: failed to post input notification: \(error.localizedDescription)\n",
-                    stderr)
-            }
+        pendingInputs.removeValue(forKey: requestId)
+        updateStatusTitle()
+        refresh()
+        // Close panel if nothing left to show
+        if pendingInputs.isEmpty && !sessions.values.contains(where: { $0.isDone }) {
+            panel.orderOut(nil)
         }
     }
 
-    // ── Notification posting ──────────────────────────────────────────────────
-    func postNotification(title: String, message: String, subtitle: String, sound: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = message
-        if !subtitle.isEmpty { content.subtitle = subtitle }
-        content.sound = UNNotificationSound(named: UNNotificationSoundName(sound + ".aiff"))
-        content.categoryIdentifier = "CLAUDE_ACTION"
-        content.interruptionLevel = .timeSensitive
-        let request = UNNotificationRequest(
-            identifier: UUID().uuidString, content: content, trigger: nil)
-        let postTs = ISO8601DateFormatter().string(from: Date())
-        print("[\(postTs)] daemon: posting '\(message)'")
-        center.add(request) { error in
-            let doneTs = ISO8601DateFormatter().string(from: Date())
-            if let error = error {
-                fputs("[\(doneTs)] daemon: failed to post: \(error.localizedDescription)\n", stderr)
-            } else {
-                print("[\(doneTs)] daemon: notification handed to UNUserNotificationCenter")
-            }
-        }
-    }
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────

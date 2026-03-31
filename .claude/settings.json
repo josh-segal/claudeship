@@ -77,6 +77,15 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect-files.sh\""
           }
         ]
+      },
+      {
+        "matcher": "Bash|Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-tool.sh\""
+          }
+        ]
       }
     ],
     "PermissionRequest": [

@@ -16,7 +16,7 @@ REPLY_FILE="/tmp/claude-input-reply-${REQUEST_ID}"
 input=$(cat)
 subtitle="$(basename "$PWD")"
 
-parsed=$(echo "$input" | python3 << 'PYEOF'
+parsed=$(echo "$input" | python3 -c "$(cat << 'PYEOF'
 import sys, json
 d = json.load(sys.stdin)
 tool = d.get('tool_name', 'a tool')
@@ -46,7 +46,7 @@ behaviors.append('deny')
 
 print(json.dumps({'tool': tool, 'options': options, 'behaviors': behaviors}))
 PYEOF
-)
+)")
 
 tool=$(echo "$parsed" | python3 -c "import json,sys; print(json.load(sys.stdin)['tool'])")
 options_json=$(echo "$parsed" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['options']))")
@@ -58,6 +58,8 @@ if [ ! -S "$SOCK" ]; then
     exit 0
 fi
 
+SESSION_ID="${CLAUDE_SESSION_ID:-}"
+
 payload=$(python3 -c "
 import json, sys
 print(json.dumps({
@@ -65,8 +67,9 @@ print(json.dumps({
     'request_id': sys.argv[1],
     'question':   sys.argv[2],
     'options':    json.loads(sys.argv[3]),
-    'subtitle':   sys.argv[4]
-}))" "$REQUEST_ID" "$tool" "$options_json" "$subtitle" 2>/dev/null)
+    'subtitle':   sys.argv[4],
+    'session_id': sys.argv[5]
+}))" "$REQUEST_ID" "$tool" "$options_json" "$subtitle" "$SESSION_ID" 2>/dev/null)
 
 printf '%s' "$payload" | nc -U -w 2 "$SOCK"
 

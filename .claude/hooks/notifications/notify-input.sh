@@ -36,7 +36,7 @@ fi
 # ── AskUserQuestion: parse structured options ─────────────────────────────────
 input=$(cat)
 
-parsed=$(echo "$input" | python3 << 'PYEOF'
+parsed=$(echo "$input" | python3 -c "$(cat << 'PYEOF'
 import sys, json
 d = json.load(sys.stdin)
 qs = d.get('input', {}).get('questions', [])
@@ -51,7 +51,7 @@ if q.get('multiSelect', False) or not opts or not question:
     sys.exit(0)
 print(json.dumps({'question': question, 'options': opts, 'questions': qs}))
 PYEOF
-)
+)")
 
 if [ "$parsed" = "TERMINAL" ] || [ -z "$parsed" ]; then
     # multiSelect or no options — let terminal handle it
@@ -85,6 +85,8 @@ if [ ! -S "$SOCK" ]; then
     exit 0
 fi
 
+SESSION_ID="${CLAUDE_SESSION_ID:-}"
+
 payload=$(python3 -c "
 import json, sys
 print(json.dumps({
@@ -92,8 +94,9 @@ print(json.dumps({
     'request_id': sys.argv[1],
     'question':   sys.argv[2],
     'options':    json.loads(sys.argv[3]),
-    'subtitle':   sys.argv[4]
-}))" "$REQUEST_ID" "$question" "$options_json" "$subtitle" 2>/dev/null)
+    'subtitle':   sys.argv[4],
+    'session_id': sys.argv[5]
+}))" "$REQUEST_ID" "$question" "$options_json" "$subtitle" "$SESSION_ID" 2>/dev/null)
 
 printf '%s' "$payload" | nc -U -w 2 "$SOCK"
 
