@@ -171,32 +171,7 @@ class PanelContentView: NSView {
         let doneSessions = rows.filter { $0.isDone }
         if !doneSessions.isEmpty {
             for row in doneSessions {
-                // Done label
-                let doneLbl = NSTextField(labelWithString: "✓  \(row.displayName)  —  Done")
-                doneLbl.textColor = .labelColor
-                doneLbl.font = .systemFont(ofSize: 13)
-                doneLbl.lineBreakMode = .byTruncatingTail
-                doneLbl.translatesAutoresizingMaskIntoConstraints = false
-                let doneRow = NSView()
-                doneRow.translatesAutoresizingMaskIntoConstraints = false
-                doneRow.addSubview(doneLbl)
-                NSLayoutConstraint.activate([
-                    doneRow.heightAnchor.constraint(equalToConstant: 22),
-                    doneLbl.leadingAnchor.constraint(equalTo: doneRow.leadingAnchor),
-                    doneLbl.centerYAnchor.constraint(equalTo: doneRow.centerYAnchor),
-                    doneLbl.trailingAnchor.constraint(lessThanOrEqualTo: doneRow.trailingAnchor),
-                ])
-                stack.addArrangedSubview(doneRow)
-                doneRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-
-                // Focus Terminal clickable row (indented)
-                addRow(
-                    indent: 16,
-                    text: "Focus Terminal",
-                    color: .secondaryLabelColor,
-                    cwd: row.cwd,
-                    onFocus: onFocus
-                )
+                addRow(indent: 0, text: "✓  \(row.displayName)  —  Done", color: .labelColor, cwd: row.cwd, onFocus: onFocus)
             }
 
             // Separator after done section
@@ -227,14 +202,14 @@ class PanelContentView: NSView {
                 color = .labelColor
             } else {
                 text = "○  \(row.displayName)  —  idle"
-                color = .secondaryLabelColor
+                color = .labelColor
             }
             addRow(indent: 0, text: text, color: color, cwd: row.cwd, onFocus: onFocus)
             for agent in row.agents {
                 addRow(
                     indent: 16,
                     text: "↳  \(agent.name.isEmpty ? "subagent" : agent.name)",
-                    color: .tertiaryLabelColor,
+                    color: .labelColor,
                     cwd: row.cwd,
                     onFocus: onFocus
                 )
@@ -308,6 +283,7 @@ class ClaudeNotifierDaemon: NSObject {
         var isWorking: Bool
         var currentTool: String?
         var currentCommand: String?
+        var toolUpdatedAt: Date?
         var isDone: Bool
         var doneAt: Date?
     }
@@ -318,9 +294,6 @@ class ClaudeNotifierDaemon: NSObject {
     var spinnerTimer: DispatchSourceTimer?
     var spinnerFrame = 0
     let spinnerFrames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
-
-    // Track most recently active working session for status bar display
-    var lastWorkingSessionId: String?
 
     // ── Panel ─────────────────────────────────────────────────────────────────
     let panel: NSPanel
@@ -466,7 +439,7 @@ class ClaudeNotifierDaemon: NSObject {
     func updateStatusTitle() {
         // Priority 1: any pending input
         if !pendingInputs.isEmpty {
-            statusItem.button?.title = "⚡ claudeship"
+            statusItem.button?.title = "⁇ claudeship"
             return
         }
 
@@ -476,17 +449,15 @@ class ClaudeNotifierDaemon: NSObject {
 
         // Priority 2: any session working
         if working > 0 {
-            if working == 1, let s = workingSessions.first {
-                // Single working session: show tool and command
-                if let tool = s.currentTool {
-                    let cmd = s.currentCommand.map { " \($0)" } ?? ""
-                    statusItem.button?.title = "\(spinnerFrames[spinnerFrame]) claudeship — \(tool):\(cmd)"
-                } else {
-                    statusItem.button?.title = "\(spinnerFrames[spinnerFrame]) claudeship"
-                }
+            let countStr = "\(working)/\(total)"
+            let recentSession = workingSessions
+                .filter { $0.currentTool != nil }
+                .max(by: { ($0.toolUpdatedAt ?? .distantPast) < ($1.toolUpdatedAt ?? .distantPast) })
+            if let tool = recentSession?.currentTool {
+                let cmd = recentSession?.currentCommand.map { " \($0)" } ?? ""
+                statusItem.button?.title = "\(spinnerFrames[spinnerFrame]) \(countStr) claudeship — \(tool):\(cmd)"
             } else {
-                // Multiple working sessions
-                statusItem.button?.title = "\(spinnerFrames[spinnerFrame]) \(working)/\(total) claudeship"
+                statusItem.button?.title = "\(spinnerFrames[spinnerFrame]) \(countStr) claudeship"
             }
             return
         }
@@ -613,6 +584,8 @@ class ClaudeNotifierDaemon: NSObject {
             DispatchQueue.main.async { [weak self] in self?.handleSessionWorking(json) }
         case "session_tool":
             DispatchQueue.main.async { [weak self] in self?.handleSessionTool(json) }
+        case "session_thinking":
+            DispatchQueue.main.async { [weak self] in self?.handleSessionThinking(json) }
         case "session_end":
             DispatchQueue.main.async { [weak self] in self?.handleSessionEnd(json) }
         case "subagent_start":
@@ -631,6 +604,8 @@ class ClaudeNotifierDaemon: NSObject {
             }
         case "session_inputs_clear":
             DispatchQueue.main.async { [weak self] in self?.handleSessionInputsClear(json) }
+        case "session_idle":
+            DispatchQueue.main.async { [weak self] in self?.handleSessionIdle(json) }
         default:
             break
         }
@@ -648,7 +623,7 @@ class ClaudeNotifierDaemon: NSObject {
         print("[\(ts)] daemon: session_register id=\(sessionId) name='\(displayName)'")
         sessions[sessionId] = Session(
             id: sessionId, cwd: cwd, displayName: displayName, isWorking: false,
-            currentTool: nil, currentCommand: nil, isDone: false, doneAt: nil)
+            currentTool: nil, currentCommand: nil, toolUpdatedAt: nil, isDone: false, doneAt: nil)
         updateStatusTitle()
         refresh()
     }
@@ -658,11 +633,10 @@ class ClaudeNotifierDaemon: NSObject {
         if sessions[sessionId] == nil {
             sessions[sessionId] = Session(
                 id: sessionId, cwd: "", displayName: String(sessionId.prefix(8)), isWorking: false,
-                currentTool: nil, currentCommand: nil, isDone: false, doneAt: nil)
+                currentTool: nil, currentCommand: nil, toolUpdatedAt: nil, isDone: false, doneAt: nil)
         }
         sessions[sessionId]!.isWorking = true
         sessions[sessionId]!.isDone = false
-        lastWorkingSessionId = sessionId
         updateStatusTitle()
         updateSpinnerTimer()
         refresh()
@@ -672,7 +646,20 @@ class ClaudeNotifierDaemon: NSObject {
         guard let sessionId = json["session_id"] as? String else { return }
         sessions[sessionId]?.currentTool = json["tool_name"] as? String
         sessions[sessionId]?.currentCommand = json["command_preview"] as? String
+        sessions[sessionId]?.toolUpdatedAt = Date()
         updateStatusTitle()
+        if panel.isVisible { refresh() }
+    }
+
+    func handleSessionThinking(_ json: [String: Any]) {
+        guard let sessionId = json["session_id"] as? String else { return }
+        guard sessions[sessionId] != nil else { return }
+        sessions[sessionId]!.isWorking = true
+        sessions[sessionId]!.isDone = false
+        sessions[sessionId]!.currentTool = nil
+        sessions[sessionId]!.currentCommand = nil
+        updateStatusTitle()
+        updateSpinnerTimer()
         if panel.isVisible { refresh() }
     }
 
@@ -680,12 +667,18 @@ class ClaudeNotifierDaemon: NSObject {
         guard let sessionId = json["session_id"] as? String else { return }
         let ts = ISO8601DateFormatter().string(from: Date())
         print("[\(ts)] daemon: session_end id=\(sessionId)")
+        // Clear pending inputs so ⚡ doesn't stick after session close
+        let before = pendingInputs.count
+        pendingInputs = pendingInputs.filter { $0.value.sessionId != sessionId }
+        if pendingInputs.count < before {
+            print("[\(ts)] daemon: cleared \(before - pendingInputs.count) pending input(s) for ended session \(sessionId)")
+        }
         sessions.removeValue(forKey: sessionId)
         agentSessions.removeValue(forKey: sessionId)
-        if lastWorkingSessionId == sessionId { lastWorkingSessionId = nil }
         updateStatusTitle()
         updateSpinnerTimer()
         refresh()
+        if pendingInputs.isEmpty { panel.orderOut(nil) }
     }
 
     func handleSessionStop(_ json: [String: Any]) {
@@ -794,6 +787,20 @@ class ClaudeNotifierDaemon: NSObject {
         refresh()
         positionPanel()
         panel.orderFrontRegardless()
+    }
+
+    func handleSessionIdle(_ json: [String: Any]) {
+        guard let sessionId = json["session_id"] as? String else { return }
+        let ts = ISO8601DateFormatter().string(from: Date())
+        print("[\(ts)] daemon: session_idle id=\(sessionId)")
+        if sessions[sessionId] != nil {
+            sessions[sessionId]!.isWorking = false
+            sessions[sessionId]!.currentTool = nil
+            sessions[sessionId]!.currentCommand = nil
+        }
+        updateStatusTitle()
+        updateSpinnerTimer()
+        refresh()
     }
 
     func handleSessionInputsClear(_ json: [String: Any]) {

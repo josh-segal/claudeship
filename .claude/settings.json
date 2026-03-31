@@ -152,6 +152,14 @@
     ],
     "PostToolUse": [
       {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-tool-done.sh\""
+          }
+        ]
+      },
+      {
         "matcher": "AskUserQuestion",
         "hooks": [
           {
@@ -167,7 +175,17 @@
             "type": "command",
             "timeout": 120,
             "statusMessage": "Rebuilding ClaudeNotifier...",
-            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; if [[ \"$f\" == *\".claude/tools/ClaudeNotifier.swift\" ]]; then cd \"$CLAUDE_PROJECT_DIR\" && swiftc .claude/tools/ClaudeNotifier.swift -o .claude/tools/ClaudeNotifier -framework Cocoa && codesign --force --sign - .claude/tools/ClaudeNotifier && { pkill -f ClaudeNotifier 2>/dev/null; .claude/tools/ClaudeNotifier --daemon >> /tmp/claude-notifier.log 2>&1 & }; fi; } || true"
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; if [[ \"$f\" == *\".claude/tools/ClaudeNotifier.swift\" ]]; then cd \"$CLAUDE_PROJECT_DIR\" && swiftc .claude/tools/ClaudeNotifier.swift -o .claude/tools/ClaudeNotifier -framework Cocoa && cp .claude/tools/ClaudeNotifier /Applications/ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier && codesign --force --sign - /Applications/ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier && launchctl unload $HOME/Library/LaunchAgents/com.claudeship.notifier.plist && launchctl load $HOME/Library/LaunchAgents/com.claudeship.notifier.plist; fi; } || true"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-post-tool-failure.sh\""
           }
         ]
       }

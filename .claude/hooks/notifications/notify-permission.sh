@@ -39,7 +39,7 @@ if suggestions:
     else:
         label = "Yes, always"
     options.append(label)
-    behaviors.append('allow_suggestion')  # marker; mapped to allow for now
+    behaviors.append('allow_suggestion')  # marker; echoes suggestions back for persistent rule
 
 options.append('No')
 behaviors.append('deny')
@@ -51,6 +51,7 @@ PYEOF
 tool=$(echo "$parsed" | python3 -c "import json,sys; print(json.load(sys.stdin)['tool'])")
 options_json=$(echo "$parsed" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['options']))")
 behaviors_json=$(echo "$parsed" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['behaviors']))")
+suggestions_json=$(echo "$input" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('permission_suggestions', [])))")
 
 echo "[$(date '+%H:%M:%S.%3N')] notify-permission.sh: $tool (id=$REQUEST_ID)" >> "$LOG"
 
@@ -79,30 +80,73 @@ for i in $(seq 1 600); do
     if [ -f "$REPLY_FILE" ]; then
         chosen=$(cat "$REPLY_FILE")
         rm -f "$REPLY_FILE"
-        behavior=$(python3 -c "
+        raw_behavior=$(python3 -c "
 import json, sys
 options   = json.loads(sys.argv[1])
 behaviors = json.loads(sys.argv[2])
 chosen    = sys.argv[3]
 try:
     idx = options.index(chosen)
-    b = behaviors[idx]
-    # allow_suggestion falls back to allow until we have the rules response format
-    print('allow' if b == 'allow_suggestion' else b)
+    print(behaviors[idx])
 except ValueError:
     print('deny')
 " "$options_json" "$behaviors_json" "$chosen")
-        echo "[$(date '+%H:%M:%S.%3N')] notify-permission.sh: reply='$chosen' → behavior=$behavior" >> "$LOG"
+        echo "[$(date '+%H:%M:%S.%3N')] notify-permission.sh: reply='$chosen' → raw_behavior=$raw_behavior" >> "$LOG"
         python3 -c "
-import json, sys
+import json, sys, os
+raw      = sys.argv[1]
+sugg     = json.loads(sys.argv[2])
+proj_dir = sys.argv[3]
+log      = sys.argv[4]
+
+if raw == 'allow_suggestion' and sugg:
+    # Build updatedPermissions for Claude Code (may or may not be honored)
+    updated_permissions = []
+    for s in sugg:
+        rules = s.get('rules', [])
+        if rules:
+            updated_permissions.append({
+                'type': 'addRules',
+                'rules': rules,
+                'behavior': 'allow',
+                'destination': s.get('destination', 'localSettings')
+            })
+    decision = {'behavior': 'allow', 'updatedPermissions': updated_permissions}
+
+    # Also write directly to settings.local.json as a reliable fallback
+    local_settings_path = os.path.join(proj_dir, '.claude', 'settings.local.json')
+    try:
+        if os.path.exists(local_settings_path):
+            with open(local_settings_path) as f:
+                local = json.load(f)
+        else:
+            local = {}
+        perms = local.setdefault('permissions', {})
+        allow_list = perms.setdefault('allow', [])
+        for s in sugg:
+            for rule in s.get('rules', []):
+                tool = rule.get('toolName', '')
+                content = rule.get('ruleContent', '')
+                entry = f\"{tool}({content})\" if content else tool
+                if entry and entry not in allow_list:
+                    allow_list.append(entry)
+        with open(local_settings_path, 'w') as f:
+            json.dump(local, f, indent=2)
+        with open(log, 'a') as f:
+            f.write(f'[direct-write] settings.local.json updated: {allow_list}\n')
+    except Exception as e:
+        with open(log, 'a') as f:
+            f.write(f'[direct-write] ERROR: {e}\n')
+else:
+    decision = {'behavior': 'allow' if raw == 'allow' else raw}
+
 print(json.dumps({
     'hookSpecificOutput': {
         'hookEventName': 'PermissionRequest',
-        'decision': {
-            'behavior': sys.argv[1]
-        }
+        'decision': decision
     }
-}))" "$behavior"
+}))
+" "$raw_behavior" "$suggestions_json" "$CLAUDE_PROJECT_DIR" "$LOG"
         exit 2
     fi
     sleep 1

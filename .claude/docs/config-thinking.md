@@ -126,6 +126,35 @@ so the single human question is a true last-mile check rather than the only chec
 
 ---
 
+### 6. Status bar appearance & verbosity
+
+**Current state:** Status bar icons and behavior are hardcoded in the Swift daemon:
+- `✳` idle, `⁇` pending input, spinner frames for working, `✓` done
+- Verbosity is fixed: single working session shows `tool:command`, multiple shows `N/total`
+- Done state auto-clears after a hardcoded 8 seconds
+
+**Things that should be user-configurable:**
+- Icons per state (idle, working, pending input, done) — users have strong opinions here
+- Whether to show the current tool/command in the status bar at all (some find it noisy,
+  others want the full `tool:command` stream)
+- Done state duration before auto-clear (or disable the ✓ entirely)
+- Whether the panel auto-opens on done/question or only on click
+
+**Verbosity levels to consider:**
+- **Minimal:** just the icon + "claudeship", no tool/command detail ever
+- **Normal (current):** show `tool:command` for single sessions, `N/total` for multiple
+- **Verbose:** always show tool/command even with multiple sessions, maybe show session name
+
+**Open:**
+- Icons are the most personal preference item encountered so far — this should be one
+  of the first things the setup wizard asks about
+- Verbosity probably maps cleanly to a single enum in config (`minimal | normal | verbose`)
+  rather than individual toggles
+- The daemon would need a reload signal (SIGHUP, see §3) to pick up icon/verbosity changes
+  without a full restart
+
+---
+
 ## Things to Watch As More Tools Are Built
 
 - Every new tool that needs config will reveal whether the current approach scales
