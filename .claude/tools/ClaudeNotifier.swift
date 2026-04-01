@@ -1,4 +1,5 @@
 import Cocoa
+import Carbon
 
 let args = CommandLine.arguments
 
@@ -296,6 +297,7 @@ class ClaudeNotifierDaemon: NSObject {
     var spinnerTimer: DispatchSourceTimer?
     var spinnerFrame = 0
     let spinnerFrames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
+    var hotKeyRef: EventHotKeyRef?
 
     // ── Panel ─────────────────────────────────────────────────────────────────
     let panel: NSPanel
@@ -343,11 +345,48 @@ class ClaudeNotifierDaemon: NSObject {
 
         rotateLogIfNeeded()
         setupStatusItem()
+        setupHotKey()
         startListening()
     }
 
     deinit {
         if let m = globalMonitor { NSEvent.removeMonitor(m) }
+    }
+
+    // ── Global hotkey (Cmd+Shift+C) ───────────────────────────────────────────
+    func setupHotKey() {
+        var hotKeyID = EventHotKeyID()
+        hotKeyID.signature = 0x434C5348 // "CLSH"
+        hotKeyID.id = 1
+
+        // kVK_ANSI_C = 8, cmdKey | shiftKey = 256 | 512
+        RegisterEventHotKey(8, UInt32(cmdKey | shiftKey), hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
+
+        var eventTypes = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
+        ]
+        InstallEventHandler(
+            GetApplicationEventTarget(),
+            { (_, event, userData) -> OSStatus in
+                guard let event = event, let userData = userData else { return OSStatus(eventNotHandledErr) }
+                let daemon = Unmanaged<ClaudeNotifierDaemon>.fromOpaque(userData).takeUnretainedValue()
+                let kind = GetEventKind(event)
+                DispatchQueue.main.async {
+                    if kind == UInt32(kEventHotKeyPressed) {
+                        daemon.refresh()
+                        daemon.positionPanel()
+                        daemon.panel.orderFrontRegardless()
+                    } else {
+                        daemon.panel.orderOut(nil)
+                    }
+                }
+                return noErr
+            },
+            2, &eventTypes,
+            Unmanaged.passUnretained(self).toOpaque(),
+            nil
+        )
     }
 
     // ── Status item ───────────────────────────────────────────────────────────
