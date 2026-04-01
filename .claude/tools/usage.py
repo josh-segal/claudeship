@@ -110,27 +110,81 @@ def compute_usage(projects_dir: str, now: datetime) -> dict:
     return buckets
 
 
+def load_accounts() -> dict:
+    path = os.path.expanduser("~/.claude/accounts.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data.get("accounts", {})
+    except Exception:
+        return {}
+
+
 def main():
     use_json = "--json" in sys.argv
+    use_detail = "--detail" in sys.argv
     now = datetime.now(timezone.utc)
-    buckets = compute_usage(os.path.expanduser("~/.claude/projects"), now)
+
+    accounts = load_accounts()
+
+    # Compute per-account usage
+    per_account = {}
+    for name, info in accounts.items():
+        config_dir = os.path.expanduser(info.get("config_dir", ""))
+        projects_dir = os.path.join(config_dir, "projects")
+        per_account[name] = compute_usage(projects_dir, now)
+
+    # Aggregate totals across all accounts (or fall back to default path)
+    if per_account:
+        totals = {
+            period: {
+                "cost": sum(per_account[a][period]["cost"] for a in per_account),
+                "input_tokens": sum(
+                    per_account[a][period]["input_tokens"] for a in per_account
+                ),
+                "output_tokens": sum(
+                    per_account[a][period]["output_tokens"] for a in per_account
+                ),
+                "cache_read_tokens": sum(
+                    per_account[a][period]["cache_read_tokens"] for a in per_account
+                ),
+            }
+            for period in ("daily", "weekly", "monthly")
+        }
+        for period in totals:
+            totals[period]["cost"] = round(totals[period]["cost"], 6)
+    else:
+        totals = compute_usage(os.path.expanduser("~/.claude/projects"), now)
 
     write_state(
         {
             "usage": {
-                "daily": buckets["daily"],
-                "weekly": buckets["weekly"],
-                "monthly": buckets["monthly"],
+                "daily": totals["daily"],
+                "weekly": totals["weekly"],
+                "monthly": totals["monthly"],
                 "updated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
         }
     )
 
     if use_json:
-        output = {}
+        output = {"accounts": {}, "total": {}}
+        for name, buckets in per_account.items():
+            output["accounts"][name] = {}
+            for period in ("daily", "weekly", "monthly"):
+                b = buckets[period]
+                output["accounts"][name][period] = {
+                    "cost": b["cost"],
+                    "input_tokens": b["input_tokens"],
+                    "output_tokens": b["output_tokens"],
+                    "cache_read_tokens": b["cache_read_tokens"],
+                    "total_tokens": b["input_tokens"] + b["output_tokens"],
+                }
         for period in ("daily", "weekly", "monthly"):
-            b = buckets[period]
-            output[period] = {
+            b = totals[period]
+            output["total"][period] = {
                 "cost": b["cost"],
                 "input_tokens": b["input_tokens"],
                 "output_tokens": b["output_tokens"],
@@ -139,21 +193,75 @@ def main():
             }
         print(json.dumps(output, indent=2))
     else:
-        labels = [("Today", "daily"), ("Week", "weekly"), ("Month", "monthly")]
+        periods = [("Today", "daily"), ("Week", "weekly"), ("Month", "monthly")]
         print()
         print("  Claude Code Usage")
-        print("  " + "─" * 44)
-        print(
-            f"  {'Period':<8}  {'Cost':<10}  {'Input':>7}  {'Output':>7}  {'Cache':>7}"
-        )
-        print("  " + "─" * 44)
-        for label, key in labels:
-            b = buckets[key]
-            cost_str = f"$ {b['cost']:>6.2f}"
-            print(
-                f"  {label:<8}  {cost_str:<10}  {fmt_tokens(b['input_tokens']):>7}  {fmt_tokens(b['output_tokens']):>7}  {fmt_tokens(b['cache_read_tokens']):>7}"
+
+        if per_account:
+            name_w = (
+                max(
+                    max(len(accounts[n].get("display_name", n)) for n in per_account),
+                    len("Account"),
+                )
+                + 2
             )
-        print()
+
+            if use_detail:
+                rule_w = name_w + 2 + 10 + 2 + 7 + 2 + 7 + 2 + 7
+                for label, period_key in periods:
+                    print()
+                    print(f"  {label}")
+                    print("  " + "─" * rule_w)
+                    print(
+                        f"  {'Account':<{name_w}}  {'Cost':>10}  {'Input':>7}  {'Output':>7}  {'Cache':>7}"
+                    )
+                    print("  " + "─" * rule_w)
+                    for name in per_account:
+                        b = per_account[name][period_key]
+                        display = accounts[name].get("display_name", name)
+                        print(
+                            f"  {display:<{name_w}}  $ {b['cost']:>6.2f}  {fmt_tokens(b['input_tokens']):>7}  {fmt_tokens(b['output_tokens']):>7}  {fmt_tokens(b['cache_read_tokens']):>7}"
+                        )
+                    print("  " + "─" * rule_w)
+                    b = totals[period_key]
+                    print(
+                        f"  {'Total':<{name_w}}  $ {b['cost']:>6.2f}  {fmt_tokens(b['input_tokens']):>7}  {fmt_tokens(b['output_tokens']):>7}  {fmt_tokens(b['cache_read_tokens']):>7}"
+                    )
+                print()
+            else:
+                col_w = 10
+                rule_w = name_w + (col_w + 2) * 3 + 2
+                print("  " + "─" * rule_w)
+                print(
+                    f"  {'Account':<{name_w}}  {'Today':>{col_w}}  {'Week':>{col_w}}  {'Month':>{col_w}}"
+                )
+                print("  " + "─" * rule_w)
+                for name in per_account:
+                    display = accounts[name].get("display_name", name)
+                    cols = [
+                        f"$ {per_account[name][p]['cost']:>6.2f}" for _, p in periods
+                    ]
+                    print(
+                        f"  {display:<{name_w}}  {cols[0]:>{col_w}}  {cols[1]:>{col_w}}  {cols[2]:>{col_w}}"
+                    )
+                print("  " + "─" * rule_w)
+                total_cols = [f"$ {totals[p]['cost']:>6.2f}" for _, p in periods]
+                print(
+                    f"  {'Total':<{name_w}}  {total_cols[0]:>{col_w}}  {total_cols[1]:>{col_w}}  {total_cols[2]:>{col_w}}"
+                )
+                print()
+        else:
+            print("  " + "─" * 44)
+            print(
+                f"  {'Period':<8}  {'Cost':<10}  {'Input':>7}  {'Output':>7}  {'Cache':>7}"
+            )
+            print("  " + "─" * 44)
+            for label, key in periods:
+                b = totals[key]
+                print(
+                    f"  {label:<8}  $ {b['cost']:>6.2f}  {fmt_tokens(b['input_tokens']):>7}  {fmt_tokens(b['output_tokens']):>7}  {fmt_tokens(b['cache_read_tokens']):>7}"
+                )
+            print()
 
 
 if __name__ == "__main__":
