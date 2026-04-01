@@ -247,8 +247,9 @@ class PanelContentView: NSView {
                 .foregroundColor: NSColor.labelColor,
                 .font: NSFont.systemFont(ofSize: 13)
             ]
+            let shortLabel = row.account.map { " " + String($0.prefix(4)) } ?? " ●"
             attr.append(NSAttributedString(string: prefix, attributes: base))
-            attr.append(NSAttributedString(string: " ●", attributes: [
+            attr.append(NSAttributedString(string: shortLabel, attributes: [
                 .foregroundColor: accountColor,
                 .font: NSFont.systemFont(ofSize: 13)
             ]))
@@ -581,20 +582,21 @@ class ClaudeNotifierDaemon: NSObject {
                 toolSuffix = ""
             }
 
-            // Collect unique account colors from working sessions (preserve insertion order)
+            // Collect unique accounts from working sessions (preserve insertion order)
             var seenAccounts: [String] = []
-            var dotColors: [NSColor] = []
+            var accountLabels: [(label: String, color: NSColor)] = []
             for s in workingSessions {
                 let key = s.account ?? "__none__"
                 if !seenAccounts.contains(key) {
                     seenAccounts.append(key)
                     if let acct = s.account, let cfg = accountConfigs[acct] {
-                        dotColors.append(cfg.color)
+                        let short = String(acct.prefix(4))
+                        accountLabels.append((label: short, color: cfg.color))
                     }
                 }
             }
 
-            if dotColors.isEmpty {
+            if accountLabels.isEmpty {
                 let plain = "\(spinnerFrames[spinnerFrame]) \(countStr) claudeship\(toolSuffix)"
                 statusItem.button?.title = plain
                 statusItem.button?.attributedTitle = NSAttributedString(string: plain)
@@ -602,8 +604,9 @@ class ClaudeNotifierDaemon: NSObject {
                 let attr = NSMutableAttributedString()
                 let base: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.labelColor]
                 attr.append(NSAttributedString(string: "\(spinnerFrames[spinnerFrame]) \(countStr) ", attributes: base))
-                for dotColor in dotColors {
-                    attr.append(NSAttributedString(string: "●", attributes: [.foregroundColor: dotColor]))
+                for (i, entry) in accountLabels.enumerated() {
+                    if i > 0 { attr.append(NSAttributedString(string: " ", attributes: base)) }
+                    attr.append(NSAttributedString(string: entry.label, attributes: [.foregroundColor: entry.color]))
                 }
                 attr.append(NSAttributedString(string: " claudeship\(toolSuffix)", attributes: base))
                 statusItem.button?.attributedTitle = attr
@@ -634,7 +637,9 @@ class ClaudeNotifierDaemon: NSObject {
                 guard let self = self else { return }
                 self.spinnerFrame = (self.spinnerFrame + 1) % self.spinnerFrames.count
                 self.updateStatusTitle()
-                if self.panel.isVisible { self.refresh() }
+                // Don't rebuild the panel while inputs are pending — doing so destroys
+                // buttons mid-click (between mouseDown and mouseUp), causing missed clicks.
+                if self.panel.isVisible && self.pendingInputs.isEmpty { self.refresh() }
             }
             timer.resume()
             spinnerTimer = timer
