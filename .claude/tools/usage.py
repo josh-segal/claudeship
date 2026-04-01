@@ -27,10 +27,8 @@ def fmt_tokens(n):
     return str(n)
 
 
-def main():
-    use_json = "--json" in sys.argv
-
-    now = datetime.now(timezone.utc)
+def compute_usage(projects_dir: str, now: datetime) -> dict:
+    """Compute usage buckets from JSONL files. Returns daily/weekly/monthly dicts."""
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=today_start.weekday())
     month_start = today_start.replace(day=1)
@@ -56,7 +54,6 @@ def main():
         },
     }
 
-    projects_dir = os.path.expanduser("~/.claude/projects")
     if os.path.isdir(projects_dir):
         pattern = os.path.join(projects_dir, "**", "*.jsonl")
         for jsonl_path in glob.glob(pattern, recursive=True):
@@ -107,9 +104,16 @@ def main():
             except OSError:
                 continue
 
-    # Round costs
     for b in buckets.values():
         b["cost"] = round(b["cost"], 6)
+
+    return buckets
+
+
+def main():
+    use_json = "--json" in sys.argv
+    now = datetime.now(timezone.utc)
+    buckets = compute_usage(os.path.expanduser("~/.claude/projects"), now)
 
     write_state(
         {

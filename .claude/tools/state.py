@@ -2,6 +2,7 @@ import os
 import json
 import fcntl
 import sys
+import tempfile
 
 STATE_PATH = os.path.expanduser("~/.claude/state.json")
 
@@ -66,13 +67,21 @@ def write_state(updates: dict) -> None:
         current = _deep_merge({}, _DEFAULTS)
     merged = _deep_merge(current, updates)
 
-    tmp_path = STATE_PATH + ".tmp"
-    os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
-    with open(tmp_path, "w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+    state_dir = os.path.dirname(STATE_PATH)
+    os.makedirs(state_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=state_dir, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                json.dump(merged, f, indent=2)
+                f.write("\n")
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+        os.replace(tmp_path, STATE_PATH)
+    except Exception:
         try:
-            json.dump(merged, f, indent=2)
-            f.write("\n")
-        finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
-    os.replace(tmp_path, STATE_PATH)
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise

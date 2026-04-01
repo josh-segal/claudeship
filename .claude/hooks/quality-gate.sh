@@ -39,6 +39,13 @@ if [ -n "$PY_FILES" ]; then
     fi
 fi
 
+# ─── Python: pytest unit tests ───────────────────────────────────────
+if [ -n "$PY_FILES" ] && [ -d "tests/unit" ]; then
+    if command -v pytest &>/dev/null; then
+        pytest tests/unit/ -q --tb=short 2>&1 || true
+    fi
+fi
+
 # ─── Go: gofmt ───────────────────────────────────────────────────────
 GO_FILES=$(echo "$CHANGED_FILES" | grep '\.go$' || true)
 if [ -n "$GO_FILES" ]; then
