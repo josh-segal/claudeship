@@ -115,7 +115,7 @@ class PanelContentView: NSView {
         if !inputs.isEmpty {
             for input in inputs {
                 // Question label
-                let labelText = "⚡  \(input.question)  (\(input.sessionName))"
+                let labelText = "??  \(input.question)  (\(input.sessionName))"
                 let lbl = NSTextField(labelWithString: labelText)
                 lbl.textColor = .labelColor
                 lbl.font = .systemFont(ofSize: 13)
@@ -826,7 +826,7 @@ class ClaudeNotifierDaemon: NSObject {
         guard let sessionId = json["session_id"] as? String else { return }
         let ts = ISO8601DateFormatter().string(from: Date())
         print("[\(ts)] daemon: session_end id=\(sessionId)")
-        // Clear pending inputs so ⚡ doesn't stick after session close
+        // Clear pending inputs so ?? doesn't stick after session close
         let before = pendingInputs.count
         pendingInputs = pendingInputs.filter { $0.value.sessionId != sessionId }
         if pendingInputs.count < before {

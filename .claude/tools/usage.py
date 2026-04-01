@@ -27,6 +27,42 @@ def fmt_tokens(n):
     return str(n)
 
 
+# Pricing per million tokens: (input, output, cache_read, cache_write)
+_PRICING = {
+    "claude-opus-4": (15.00, 75.00, 1.500, 18.750),
+    "claude-sonnet-4": (3.00, 15.00, 0.300, 3.750),
+    "claude-haiku-4": (0.80, 4.00, 0.080, 1.000),
+}
+_PRICING_DEFAULT = _PRICING["claude-sonnet-4"]
+
+
+def _model_pricing(model: str) -> tuple:
+    for prefix, rates in _PRICING.items():
+        if model.startswith(prefix):
+            return rates
+    return _PRICING_DEFAULT
+
+
+def _estimate_cost(entry: dict) -> float:
+    """Estimate cost from token usage when costUSD is absent."""
+    cost = entry.get("costUSD")
+    if isinstance(cost, (int, float)) and cost > 0:
+        return cost
+
+    if entry.get("type") != "assistant":
+        return 0.0
+
+    model = entry.get("message", {}).get("model", "")
+    usage = entry.get("message", {}).get("usage", {}) or {}
+    inp = usage.get("input_tokens", 0) or 0
+    out = usage.get("output_tokens", 0) or 0
+    cr = usage.get("cache_read_input_tokens", 0) or 0
+    cw = usage.get("cache_creation_input_tokens", 0) or 0
+
+    p_inp, p_out, p_cr, p_cw = _model_pricing(model)
+    return (inp * p_inp + out * p_out + cr * p_cr + cw * p_cw) / 1_000_000
+
+
 def compute_usage(projects_dir: str, now: datetime) -> dict:
     """Compute usage buckets from JSONL files. Returns daily/weekly/monthly dicts."""
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -68,12 +104,15 @@ def compute_usage(projects_dir: str, now: datetime) -> dict:
                         except json.JSONDecodeError:
                             continue
 
-                        cost = entry.get("costUSD", 0)
-                        if not (isinstance(cost, (int, float)) and cost > 0):
+                        if entry.get("type") != "assistant":
                             continue
 
                         ts = parse_ts(entry.get("timestamp"))
                         if ts is None:
+                            continue
+
+                        cost = _estimate_cost(entry)
+                        if not cost:
                             continue
 
                         usage = entry.get("message", {}).get("usage", {}) or {}
