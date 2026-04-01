@@ -10,3 +10,4 @@
 - [ ] notifications
 - [ ] git-like change graph, research entire
 - [ ] make user level project
+- [ ] see some short of history graph/visual/list/trajectory for individual agents, maybe on a keybind to "peek" into sessions
