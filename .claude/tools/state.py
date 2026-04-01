@@ -28,6 +28,7 @@ _DEFAULTS = {
             "cache_read_tokens": 0,
         },
         "updated_at": None,
+        "accounts": {},
     },
 }
 

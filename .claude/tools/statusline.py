@@ -128,7 +128,10 @@ def main():
         try:
             with open(state_path) as f:
                 state = json.load(f)
-            monthly_cost = state.get("usage", {}).get("monthly", {}).get("cost", 0.0)
+            acct_data = (
+                state.get("usage", {}).get("accounts", {}).get(current_account, {})
+            )
+            monthly_cost = acct_data.get("monthly", {}).get("cost", 0.0)
         except Exception:
             pass
 

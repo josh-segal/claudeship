@@ -204,6 +204,14 @@ def main():
                 "weekly": totals["weekly"],
                 "monthly": totals["monthly"],
                 "updated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "accounts": {
+                    name: {
+                        "daily": per_account[name]["daily"],
+                        "weekly": per_account[name]["weekly"],
+                        "monthly": per_account[name]["monthly"],
+                    }
+                    for name in per_account
+                },
             }
         }
     )
