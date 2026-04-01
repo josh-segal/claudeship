@@ -1,169 +1,199 @@
 # claudeship
 
-## .claude/hooks
+An opinionated Claude Code setup built around one principle: every tool is a thin, independently useful script that reads and writes a shared state contract. No monolithic hubs. Add a feature, wire it in, done.
 
-Opinionated safety defaults for Claude Code. Configured in `.claude/settings.json`.
+## Design Philosophy
 
-**Permissions deny** vs **hooks**: `permissions.deny` glob-matches the tool argument from the start — good for exact patterns like file paths. Hooks receive the full command string and regex-search within it, catching dangerous commands even when chained (e.g. `cd foo && sudo rm -rf /`). Some rules (like `sudo`) appear in both as defense-in-depth.
+**Shared state, not shared code.** All tools read/write `~/.claude/state.json` via `state.py`. No tool calls another directly — they compose through state.
 
-### Permissions (hard deny)
+**Two display channels.** The ClaudeNotifier daemon handles everything visual:
+- **Unix socket** (`/tmp/claude-notifier.sock`) — transient session events (working, idle, tool use, subagents)
+- **`~/.claude/state.json`** — persistent state (accounts, usage, workspace) read by the daemon via FSEvents
 
-- No editing/writing dotfiles in `~` (read is allowed)
-- No `sudo`
+**Hooks stay lean.** Lifecycle hooks are bash scripts that do one thing: send a JSON message to the socket. Heavy logic lives in Python tools. Swift handles display.
 
-### `block-dangerous-commands.sh`
+**Extend, don't fork.** Adding a new module means: write a script that reads/writes state.json, optionally add a socket message type to ClaudeNotifier, optionally add a CLAUDE.md command. Existing modules don't change.
 
-PreToolUse hook on Bash.
+---
 
-Filesystem:
-- `rm -rf /`, `rm -rf *`
-- `mkfs`, `dd if=`
-- `chmod -R 777 /`
-- Write to `/dev/sd*`
-- `curl` or `wget` piped to shell
+## Tools
 
-Git:
-- `push --force` / `push -f`
-- `reset --hard`
-- `branch -D`
+### `~/.claude/tools/state.py`
 
-### `protect-files.sh`
+Shared atomic JSON R/W utility used by all claudeship scripts. Provides `read_state()` and `write_state(updates)` with `fcntl` file locking and atomic temp-file-rename writes. Never hand-roll `~/.claude/state.json` operations.
 
-PreToolUse hook on Read, Edit, Write.
+### `~/.claude/tools/usage.py`
 
-- Blocks `.env` and `.env.*` (allows `.env.example`)
-- Lockfiles: `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `poetry.lock`, `uv.lock`, `Cargo.lock`
-- Infra: `docker-compose*.yml`, `terraform/*`
+Reads all `~/.claude/projects/**/*.jsonl`, sums `costUSD` and token counts grouped by day, week, and month, and writes results to `~/.claude/state.json`.
 
-### `quality-gate.sh`
+```bash
+python3 ~/.claude/tools/usage.py          # human-readable table
+python3 ~/.claude/tools/usage.py --json   # machine-readable JSON
+```
 
-Stop + SubagentStop hook. Auto-formats changed files using whichever tools are present:
+Or ask Claude directly: `/usage`
 
-- Prettier (JS/TS)
-- Ruff format + check --fix (Python)
-- gofmt (Go)
-- rustfmt (Rust)
+### `~/.claude/tools/accounts.py`
 
-### `stop.sh`
+Manages the account registry at `~/.claude/accounts.json`. Shell aliases are the switching mechanism — no global active account concept.
 
-Stop hook. If Ghostty is the focused app, sends a BEL to the terminal (Ghostty adds 🔔 to the tab title). If Ghostty is not focused, sends a macOS notification via the ClaudeNotifier daemon.
+```bash
+python3 ~/.claude/tools/accounts.py list
+python3 ~/.claude/tools/accounts.py add work --config-dir ~/.claude-work --color green
+python3 ~/.claude/tools/accounts.py remove work
+python3 ~/.claude/tools/accounts.py current
+```
 
-### `notifications/`
+Each account has a `config_dir` (maps to `CLAUDE_CONFIG_DIR`) and a `color`. Launch aliases are the switch:
 
-Hook scripts that send events to the ClaudeNotifier daemon socket. Each maps to a specific Claude Code hook:
+```bash
+alias claude-work='CLAUDE_CONFIG_DIR=~/.claude-work claude'
+alias claude-edu='CLAUDE_CONFIG_DIR=~/.claude-edu claude'
+```
 
-| Script | Hook | Trigger |
-|---|---|---|
-| `notify-session-register.sh` | SessionStart | Session begins — registers it in daemon state |
-| `notify-session-start.sh` | UserPromptSubmit | Prompt submitted — marks session as working |
-| `notify-session-end.sh` | SessionEnd | Session terminates — removes from daemon state |
-| `notify-input.sh` | PreToolUse → AskUserQuestion | Claude asks you a question |
-| `notify-input.sh --plan` | PreToolUse → ExitPlanMode | Plan ready for approval |
-| `notify-permission.sh` | PermissionRequest | Tool approval dialog appears |
-| `notify-elicitation.sh` | Elicitation | MCP server needs input |
-| `notify-subagent-start.sh` | SubagentStart | Subagent spawned — registers in daemon state |
-| `notify-subagent-stop.sh` | SubagentStop | Subagent finished — posts progress notification |
-| `notify-turn-stop.sh` | Stop | Turn ended — marks session idle, clears subagent state |
-| `notify-stop-failure.sh` | StopFailure | Turn ended in API error |
+Account is detected at session start from `CLAUDE_CONFIG_DIR` and tracked per-session — different sessions can run under different accounts simultaneously.
 
-#### Interactive notifications
-
-Two hook scripts go beyond passive alerts — they send an actionable notification, poll for the user's tap, then respond programmatically so Claude gets the answer without the terminal being focused.
-
-**`notify-input.sh` (AskUserQuestion)**
-
-When Claude calls `AskUserQuestion` with a single-choice question, the hook:
-
-1. Parses the question text and option labels from the hook JSON.
-2. Sends an `input_question` message to the daemon, which posts a native notification with one button per option (up to the macOS limit of ~4).
-3. Polls `/tmp/claude-input-reply-<PID>` for up to 10 minutes.
-4. When a reply arrives, exits with code 2 and a JSON body containing `updatedInput.answers` — Claude receives the selected answer and continues without terminal interaction.
-
-Falls through to terminal (exit 0) for: `multiSelect` questions, missing options, no daemon socket, or timeout.
-
-**`notify-permission.sh` (PermissionRequest)**
-
-When Claude needs tool approval:
-
-1. Parses the tool name and `permission_suggestions` from the hook JSON to build button labels matching the terminal dialog (e.g. "Yes", "Yes, allow Read from /tmp/**", "No").
-2. Sends an `input_question` message and polls for a reply the same way as above.
-3. Maps the chosen label back to a `behavior` (`allow`, `allow_suggestion` → `allow`, or `deny`) and exits 2 with `hookSpecificOutput.decision.behavior`.
-
-Falls through to the terminal dialog on timeout.
+---
 
 ## ClaudeNotifier
 
-A native macOS notification daemon (`ClaudeNotifier.app`) that powers all notifications and the menu bar status item for this setup.
+A native macOS daemon (`ClaudeNotifier.app`) that powers the menu bar status item and all notifications.
 
 ### Architecture
 
-`ClaudeNotifier` runs as a persistent LaunchAgent (`com.claudeship.notifier`) and listens on a Unix domain socket at `/tmp/claude-notifier.sock`. Hook scripts write JSON to the socket — delivery latency is ~1ms.
+Runs as a persistent LaunchAgent (`com.claudeship.notifier`), listening on `/tmp/claude-notifier.sock`. Hook scripts write JSON to the socket (~1ms delivery). Logs to `/tmp/claude-notifier.log` with 1 MB rotation.
 
-All notifications use `.timeSensitive` interruption level to push through Focus modes. Logs write to `/tmp/claude-notifier.log` with 1 MB rotation (previous log kept at `.log.1`).
+**Session registry** — tracks active Claude sessions keyed by session ID. Registers on SessionStart, marks working on UserPromptSubmit, marks idle on Stop, removes on SessionEnd.
 
-The daemon manages three subsystems:
+**Subagent tracking** — maps parent sessions to spawned agents. Posts `"Agent done (N/M)"` progress notifications. Clears on turn end.
 
-**Session registry** — tracks all active Claude sessions. On `session_register` (SessionStart), adds the session keyed by ID with its `cwd` and a display name derived from the directory basename. On `session_working` (UserPromptSubmit), marks the session active. On `turn_stop` (Stop), marks it idle. On `session_end` (SessionEnd), removes it entirely.
+**Interactive reply routing** — for `AskUserQuestion` and `PermissionRequest`, posts native notifications with action buttons and writes the user's choice back to a temp file or FIFO that the hook script polls.
 
-**Subagent progress tracking** — maintains in-memory state mapping parent sessions to their spawned subagents. On `subagent_start`, registers the agent name and increments the total count. On `subagent_stop`, increments the completion count and posts `"Agent Name done (2/3)"`. On `turn_stop`, clears state for that session. Gives per-turn progress notifications when Claude spawns multiple parallel agents.
+**Account display** — reads `~/.claude/accounts.json` on startup and on `accounts_changed` socket message. Renders per-session colored `●` dots in the panel and statusline using `NSAttributedString`.
 
-**Interactive reply routing** — for `permission_request` and `input_question` messages, dynamically registers a per-request `UNNotificationCategory` with the appropriate action buttons, posts the notification, and writes the user's choice to `/tmp/claude-input-reply-<requestId>` when a button is tapped. The hook script polls that file and exits with the response.
-
-### Menu bar status item
-
-The daemon runs as a background app (no Dock icon) and shows a persistent status item in the macOS menu bar.
-
-**Title states:**
+### Menu Bar
 
 | State | Title |
 |---|---|
-| No registered sessions | `✳ claudeship` |
-| Sessions present, all idle | `✳ N claudeship` |
-| One or more sessions working | `⣾ working/total claudeship` (animated braille spinner) |
+| No sessions | `✳ claudeship` |
+| Sessions idle | `✳ N claudeship` |
+| Session working, no account | `⣾ working/total claudeship` |
+| Session working, with account | `⣾ ●● working/total claudeship` (colored dots per account) |
 
-The spinner cycles through 8 braille frames at 10 fps while any session is active, then stops when all sessions go idle.
+Spinner cycles 8 braille frames at 10 fps. Dots in statusline reflect working sessions only — idle sessions show their account in the panel, not the bar.
 
-**Dropdown menu:**
+**Panel** (click status item or Cmd+Shift+C):
 
-Clicking the status item shows a list of all registered sessions sorted alphabetically. Each entry shows:
+```
+⣾  claudeship ●  —  Bash: npm test       ← work session (green dot)
+○  side-project ●  —  idle               ← personal session (blue dot)
+↳  test-runner                            ← subagent
+```
 
-- `●  name  —  working` or `○  name  —  idle`
-- Any active subagents for that session listed as indented items below it
+Clicking a session focuses the matching Ghostty window via AppleScript.
 
-Clicking a session entry runs an AppleScript to focus the matching Ghostty terminal window by `cwd`.
-
-**`check-focus` mode:**
-
-The binary also supports a one-shot query: `ClaudeNotifier check-focus <app-name>` exits 0 if that app is currently frontmost, 1 otherwise. Used by `stop.sh` to decide whether to send a BEL or a notification.
+**`check-focus` mode:** `ClaudeNotifier check-focus <app>` exits 0 if that app is frontmost. Used by `stop.sh` to decide BEL vs notification.
 
 ### Setup
 
-```
+```bash
 bash .claude/scripts/install-notifier.sh
 ```
 
-Then go to **System Settings > Notifications > Claude Notifier** and set the style to **Banners** or **Alerts**.
+Then **System Settings → Notifications → Claude Notifier** → set style to Banners or Alerts.
 
-## workspace.sh
+### Rebuilding
 
-Manages isolated development workspaces using git worktrees and Docker Compose, with Traefik for routing.
+Editing `ClaudeNotifier.swift` via Claude auto-rebuilds and reloads (PostToolUse hook). Manual:
 
-Each workspace gets its own worktree, branch, and Docker stack with unique URLs via `*.lvh.me`.
-
-### Commands
-
+```bash
+swiftc .claude/tools/ClaudeNotifier.swift -o .claude/tools/ClaudeNotifier -framework Cocoa
+cp .claude/tools/ClaudeNotifier /Applications/ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier
+codesign --force --sign - /Applications/ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier
+launchctl unload ~/Library/LaunchAgents/com.claudeship.notifier.plist
+launchctl load ~/Library/LaunchAgents/com.claudeship.notifier.plist
 ```
+
+Logs: `tail -f /tmp/claude-notifier.log`
+
+---
+
+## Hooks
+
+Configured in `.claude/settings.json`. All hooks are lean bash — they read input, send a socket message or check a condition, exit.
+
+### Safety
+
+**`block-dangerous-commands.sh`** — PreToolUse on Bash. Blocks: `rm -rf /`, `rm -rf *`, `mkfs`, `dd if=`, `chmod -R 777 /`, writes to `/dev/sd*`, `curl|sh`, `wget|sh`, `push --force`, `reset --hard`, `branch -D`.
+
+**`protect-files.sh`** — PreToolUse on Read/Edit/Write. Blocks: `.env*` (except `.env.example`), lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `poetry.lock`, `uv.lock`, `Cargo.lock`), `docker-compose*.yml`, `terraform/*`.
+
+**`quality-gate.sh`** — Stop + SubagentStop. Auto-formats changed files: Prettier (JS/TS), Ruff (Python), gofmt (Go), rustfmt (Rust).
+
+**`stop.sh`** — Stop hook. BEL to terminal if Ghostty is focused; macOS notification via daemon if not.
+
+**Permissions (hard deny):** no writing dotfiles in `~`, no `sudo`.
+
+### Notification Hooks (`notifications/`)
+
+| Script | Hook | Purpose |
+|---|---|---|
+| `notify-session-register.sh` | SessionStart | Register session + detect account |
+| `notify-session-start.sh` | UserPromptSubmit | Mark session working |
+| `notify-session-end.sh` | SessionEnd | Remove session |
+| `notify-input.sh` | PreToolUse → AskUserQuestion | Interactive question via notification |
+| `notify-input.sh --plan` | PreToolUse → ExitPlanMode | Plan approval via notification |
+| `notify-permission.sh` | PermissionRequest | Tool approval via notification |
+| `notify-elicitation.sh` | Elicitation | MCP input via notification |
+| `notify-subagent-start.sh` | SubagentStart | Register subagent |
+| `notify-subagent-stop.sh` | SubagentStop | Post progress notification |
+| `notify-turn-stop.sh` | Stop | Mark session idle |
+| `notify-stop-failure.sh` | StopFailure | Signal API error |
+
+**Interactive notifications:** `notify-input.sh` and `notify-permission.sh` post native notifications with action buttons, poll for the user's tap, and exit with the chosen answer — Claude gets the response without the terminal needing focus. Falls through to terminal on timeout.
+
+---
+
+## Workspaces
+
+`workspace.sh` manages isolated git worktree + Docker Compose environments. Each workspace gets its own branch, worktree, and Docker stack routed via Traefik to `*.lvh.me` URLs.
+
+```bash
 workspace.sh up <name>       # Create worktree, install deps, start stack
 workspace.sh down <name>     # Stop stack (keeps worktree)
-workspace.sh destroy <name>  # Stop stack + remove worktree/branch
+workspace.sh destroy <name>  # Stop stack + remove worktree and branch
 workspace.sh ls              # List all workspaces
 workspace.sh logs <name>     # Tail Docker logs
 workspace.sh status <name>   # Show workspace details
 ```
 
-### How it works
+The workspace MCP server (`mcp/workspace-server.ts`) exposes these as Claude tools: `workspace_suggest`, `workspace_create`, `workspace_open`, `workspace_list`, `workspace_status`, `workspace_destroy`.
 
-- Creates a git worktree branching from `dev` at `../<project>-worktrees/<name>`
-- Branch naming: `<git-user>/<name>`
-- Starts a Docker Compose stack with Traefik routing to `cos-<name>.lvh.me` (frontend), `api-cos-<name>.lvh.me` (API), `phoenix-cos-<name>.lvh.me` (Phoenix)
-- Copies `.env`, `CLAUDE.md`, and `.claude/` from the main checkout
+---
+
+## State Contract
+
+`~/.claude/state.json` — runtime state shared across all tools:
+
+```json
+{
+  "active_workspace": null,
+  "usage": {
+    "daily":   { "cost": 0.0, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0 },
+    "weekly":  { "cost": 0.0, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0 },
+    "monthly": { "cost": 0.0, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0 },
+    "updated_at": null
+  }
+}
+```
+
+`~/.claude/accounts.json` — static account registry (edit manually or via `accounts.py`):
+
+```json
+{
+  "accounts": {
+    "personal": { "display_name": "Personal", "config_dir": "~/.claude",      "color": "blue"   },
+    "work":     { "display_name": "Work",     "config_dir": "~/.claude-work", "color": "green"  }
+  }
+}
+```

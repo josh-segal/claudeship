@@ -21,3 +21,9 @@ launchctl load ~/Library/LaunchAgents/com.claudeship.notifier.plist
 ```bash
 tail -f /tmp/claude-notifier.log
 ```
+
+## Commands
+
+### /usage
+Run `python3 $CLAUDE_PROJECT_DIR/.claude/tools/usage.py` and report the output. Shows daily, weekly,
+and monthly Claude Code spend and token counts.

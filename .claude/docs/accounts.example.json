@@ -1,0 +1,14 @@
+{
+  "accounts": {
+    "personal": {
+      "display_name": "Personal",
+      "config_dir": "~/.claude",
+      "color": "blue"
+    },
+    "work": {
+      "display_name": "Work",
+      "config_dir": "~/.claude-work",
+      "color": "green"
+    }
+  }
+}

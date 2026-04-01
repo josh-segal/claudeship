@@ -75,6 +75,8 @@ class PanelContentView: NSView {
         var currentCommand: String?
         var isDone: Bool
         var agents: [(id: String, name: String)]
+        var account: String? = nil
+        var accountColor: NSColor? = nil
     }
 
     private let stack = NSStackView()
@@ -100,6 +102,7 @@ class PanelContentView: NSView {
         inputs: [InputRow],
         rows: [Row],
         spinnerChar: String = "⣷",
+        usageText: String? = nil,
         onFocus: @escaping (String) -> Void,
         onAnswer: @escaping (String, String) -> Void
     ) {
@@ -192,21 +195,16 @@ class PanelContentView: NSView {
         }
 
         for row in activeSessions {
-            let text: String
-            let color: NSColor
             if row.isWorking {
                 if let tool = row.currentTool {
                     let cmd = row.currentCommand.map { " \($0)" } ?? ""
-                    text = "\(spinnerChar)  \(row.displayName)  —  \(tool):\(cmd)"
+                    buildSessionRow(row: row, prefix: "\(spinnerChar)  \(row.displayName)", suffix: "  —  \(tool):\(cmd)", cwd: row.cwd, onFocus: onFocus)
                 } else {
-                    text = "\(spinnerChar)  \(row.displayName)  —  working"
+                    buildSessionRow(row: row, prefix: "\(spinnerChar)  \(row.displayName)", suffix: "  —  working", cwd: row.cwd, onFocus: onFocus)
                 }
-                color = .labelColor
             } else {
-                text = "○  \(row.displayName)  —  idle"
-                color = .labelColor
+                buildSessionRow(row: row, prefix: "○  \(row.displayName)", suffix: "  —  idle", cwd: row.cwd, onFocus: onFocus)
             }
-            addRow(indent: 0, text: text, color: color, cwd: row.cwd, onFocus: onFocus)
             for agent in row.agents {
                 addRow(
                     indent: 16,
@@ -217,6 +215,48 @@ class PanelContentView: NSView {
                 )
             }
         }
+
+        // ── Section D: Usage footer (future) ─────────────────────────────────────────
+        if let usageText = usageText {
+            addSeparator()
+            let lbl = NSTextField(labelWithString: usageText)
+            lbl.textColor = .secondaryLabelColor
+            lbl.font = .systemFont(ofSize: 11)
+            lbl.translatesAutoresizingMaskIntoConstraints = false
+            let usageRow = NSView()
+            usageRow.translatesAutoresizingMaskIntoConstraints = false
+            usageRow.addSubview(lbl)
+            NSLayoutConstraint.activate([
+                usageRow.heightAnchor.constraint(equalToConstant: 18),
+                lbl.leadingAnchor.constraint(equalTo: usageRow.leadingAnchor),
+                lbl.centerYAnchor.constraint(equalTo: usageRow.centerYAnchor),
+                lbl.trailingAnchor.constraint(lessThanOrEqualTo: usageRow.trailingAnchor),
+            ])
+            stack.addArrangedSubview(usageRow)
+            usageRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+    }
+
+    private func buildSessionRow(
+        row: Row, prefix: String, suffix: String,
+        cwd: String, onFocus: @escaping (String) -> Void
+    ) {
+        if let accountColor = row.accountColor {
+            let attr = NSMutableAttributedString()
+            let base: [NSAttributedString.Key: Any] = [
+                .foregroundColor: NSColor.labelColor,
+                .font: NSFont.systemFont(ofSize: 13)
+            ]
+            attr.append(NSAttributedString(string: prefix, attributes: base))
+            attr.append(NSAttributedString(string: " ●", attributes: [
+                .foregroundColor: accountColor,
+                .font: NSFont.systemFont(ofSize: 13)
+            ]))
+            attr.append(NSAttributedString(string: suffix, attributes: base))
+            addRow(indent: 0, attrText: attr, cwd: cwd, onFocus: onFocus)
+        } else {
+            addRow(indent: 0, text: prefix + suffix, color: .labelColor, cwd: cwd, onFocus: onFocus)
+        }
     }
 
     private func addSeparator() {
@@ -225,6 +265,31 @@ class PanelContentView: NSView {
         sep.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(sep)
         sep.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    }
+
+    private func addRow(
+        indent: CGFloat, attrText: NSAttributedString,
+        cwd: String, onFocus: @escaping (String) -> Void
+    ) {
+        let row = ClickableRow()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        if !cwd.isEmpty { row.clickAction = { onFocus(cwd) } }
+
+        let lbl = NSTextField(labelWithString: "")
+        lbl.attributedStringValue = attrText
+        lbl.lineBreakMode = .byTruncatingTail
+        lbl.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(lbl)
+
+        NSLayoutConstraint.activate([
+            row.heightAnchor.constraint(equalToConstant: 22),
+            lbl.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: indent),
+            lbl.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            lbl.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor),
+        ])
+
+        stack.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
 
     private func addRow(
@@ -281,6 +346,7 @@ class ClaudeNotifierDaemon: NSObject {
 
     struct Session {
         var id: String
+        var account: String? = nil
         var cwd: String
         var displayName: String
         var isWorking: Bool
@@ -291,6 +357,12 @@ class ClaudeNotifierDaemon: NSObject {
         var doneAt: Date?
     }
     var sessions: [String: Session] = [:]
+
+    struct AccountConfig {
+        var displayName: String
+        var color: NSColor
+    }
+    var accountConfigs: [String: AccountConfig] = [:]
 
     // ── Status bar ────────────────────────────────────────────────────────────
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -343,6 +415,7 @@ class ClaudeNotifierDaemon: NSObject {
 
         super.init()
 
+        loadAccountConfigs()
         rotateLogIfNeeded()
         setupStatusItem()
         setupHotKey()
@@ -445,14 +518,17 @@ class ClaudeNotifierDaemon: NSObject {
                 options: p.options, sessionName: p.sessionName)
         }
         let rows = sessions.values.sorted { $0.displayName < $1.displayName }.map { s in
-            PanelContentView.Row(
+            let acctColor = s.account.flatMap { accountConfigs[$0]?.color }
+            return PanelContentView.Row(
                 cwd: s.cwd, displayName: s.displayName, isWorking: s.isWorking,
                 currentTool: s.currentTool, currentCommand: s.currentCommand,
-                isDone: s.isDone, agents: agentSessions[s.id]?.agents ?? [])
+                isDone: s.isDone, agents: agentSessions[s.id]?.agents ?? [],
+                account: s.account, accountColor: acctColor)
         }
         panelContent.refresh(
             inputs: inputs, rows: rows,
             spinnerChar: spinnerFrames[spinnerFrame],
+            usageText: nil,
             onFocus: { [weak self] cwd in
                 self?.focusGhostty(cwd: cwd)
                 self?.panel.orderOut(nil)
@@ -482,6 +558,7 @@ class ClaudeNotifierDaemon: NSObject {
         // Priority 1: any pending input
         if !pendingInputs.isEmpty {
             statusItem.button?.title = "⁇ claudeship"
+            statusItem.button?.attributedTitle = NSAttributedString(string: "⁇ claudeship")
             return
         }
 
@@ -495,27 +572,57 @@ class ClaudeNotifierDaemon: NSObject {
             let recentSession = workingSessions
                 .filter { $0.currentTool != nil }
                 .max(by: { ($0.toolUpdatedAt ?? .distantPast) < ($1.toolUpdatedAt ?? .distantPast) })
+
+            let toolSuffix: String
             if let tool = recentSession?.currentTool {
                 let cmd = recentSession?.currentCommand.map { " \($0)" } ?? ""
-                statusItem.button?.title = "\(spinnerFrames[spinnerFrame]) \(countStr) claudeship — \(tool):\(cmd)"
+                toolSuffix = " — \(tool):\(cmd)"
             } else {
-                statusItem.button?.title = "\(spinnerFrames[spinnerFrame]) \(countStr) claudeship"
+                toolSuffix = ""
+            }
+
+            // Collect unique account colors from working sessions (preserve insertion order)
+            var seenAccounts: [String] = []
+            var dotColors: [NSColor] = []
+            for s in workingSessions {
+                let key = s.account ?? "__none__"
+                if !seenAccounts.contains(key) {
+                    seenAccounts.append(key)
+                    if let acct = s.account, let cfg = accountConfigs[acct] {
+                        dotColors.append(cfg.color)
+                    }
+                }
+            }
+
+            if dotColors.isEmpty {
+                let plain = "\(spinnerFrames[spinnerFrame]) \(countStr) claudeship\(toolSuffix)"
+                statusItem.button?.title = plain
+                statusItem.button?.attributedTitle = NSAttributedString(string: plain)
+            } else {
+                let attr = NSMutableAttributedString()
+                let base: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.labelColor]
+                attr.append(NSAttributedString(string: "\(spinnerFrames[spinnerFrame]) \(countStr) ", attributes: base))
+                for dotColor in dotColors {
+                    attr.append(NSAttributedString(string: "●", attributes: [.foregroundColor: dotColor]))
+                }
+                attr.append(NSAttributedString(string: " claudeship\(toolSuffix)", attributes: base))
+                statusItem.button?.attributedTitle = attr
             }
             return
         }
 
-        // Priority 3: recently done, no pending input
+        // Priority 3: recently done
         if sessions.values.contains(where: { $0.isDone }) {
-            statusItem.button?.title = "✓ claudeship"
+            let plain = "✓ claudeship"
+            statusItem.button?.title = plain
+            statusItem.button?.attributedTitle = NSAttributedString(string: plain)
             return
         }
 
         // Priority 4: idle
-        if total == 0 {
-            statusItem.button?.title = "✳ claudeship"
-        } else {
-            statusItem.button?.title = "✳ \(total) claudeship"
-        }
+        let plain = total == 0 ? "✳ claudeship" : "✳ \(total) claudeship"
+        statusItem.button?.title = plain
+        statusItem.button?.attributedTitle = NSAttributedString(string: plain)
     }
 
     func updateSpinnerTimer() {
@@ -649,6 +756,8 @@ class ClaudeNotifierDaemon: NSObject {
             DispatchQueue.main.async { [weak self] in self?.handleSessionInputsClear(json) }
         case "session_idle":
             DispatchQueue.main.async { [weak self] in self?.handleSessionIdle(json) }
+        case "accounts_changed":
+            DispatchQueue.main.async { [weak self] in self?.handleAccountsChanged(json) }
         default:
             break
         }
@@ -664,8 +773,10 @@ class ClaudeNotifierDaemon: NSObject {
             : URL(fileURLWithPath: cwd).lastPathComponent
         let ts = ISO8601DateFormatter().string(from: Date())
         print("[\(ts)] daemon: session_register id=\(sessionId) name='\(displayName)'")
+        let account = json["account"] as? String
         sessions[sessionId] = Session(
-            id: sessionId, cwd: cwd, displayName: displayName, isWorking: false,
+            id: sessionId, account: account?.isEmpty == false ? account : nil,
+            cwd: cwd, displayName: displayName, isWorking: false,
             currentTool: nil, currentCommand: nil, toolUpdatedAt: nil, isDone: false, doneAt: nil)
         updateStatusTitle()
         refresh()
@@ -859,6 +970,46 @@ class ClaudeNotifierDaemon: NSObject {
         updateStatusTitle()
         refresh()
         if pendingInputs.isEmpty { panel.orderOut(nil) }
+    }
+
+    // ── Account helpers ───────────────────────────────────────────────────────
+    func color(for name: String?) -> NSColor {
+        switch name {
+        case "blue":   return .systemBlue
+        case "green":  return .systemGreen
+        case "orange": return .systemOrange
+        case "red":    return .systemRed
+        case "purple": return .systemPurple
+        case "yellow": return .systemYellow
+        default:       return .secondaryLabelColor
+        }
+    }
+
+    func loadAccountConfigs() {
+        let path = NSHomeDirectory() + "/.claude/accounts.json"
+        guard let data = FileManager.default.contents(atPath: path),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let accounts = json["accounts"] as? [String: Any]
+        else {
+            accountConfigs = [:]
+            return
+        }
+        var configs: [String: AccountConfig] = [:]
+        for (name, value) in accounts {
+            guard let info = value as? [String: Any] else { continue }
+            let displayName = info["display_name"] as? String ?? name
+            let colorName   = info["color"] as? String
+            configs[name] = AccountConfig(displayName: displayName, color: color(for: colorName))
+        }
+        accountConfigs = configs
+    }
+
+    func handleAccountsChanged(_ json: [String: Any]) {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        print("[\(ts)] daemon: accounts_changed — reloading configs")
+        loadAccountConfigs()
+        updateStatusTitle()
+        refresh()
     }
 
     func writeReply(requestId: String, content: String) {

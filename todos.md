@@ -1,4 +1,4 @@
-- [ ] hooks
+- [X] hooks
 - [ ] accounts
 - [ ] usage
 - [ ] workspaces
