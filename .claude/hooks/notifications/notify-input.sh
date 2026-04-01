@@ -125,4 +125,6 @@ done
 
 # ── Timeout — fall through to terminal ───────────────────────────────────────
 echo "[$(date '+%H:%M:%S.%3N')] notify-input.sh: timeout, falling through" >> "$LOG"
+[ -n "$SESSION_ID" ] && [ -S "$SOCK" ] && \
+  printf '%s' "{\"type\":\"session_inputs_clear\",\"session_id\":\"$SESSION_ID\"}" | nc -U -w 1 "$SOCK" 2>/dev/null
 exit 0

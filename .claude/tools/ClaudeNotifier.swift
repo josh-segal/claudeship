@@ -1017,23 +1017,32 @@ class ClaudeNotifierDaemon: NSObject {
 
         if let fifoPath = pending.replyFifoPath {
             DispatchQueue.global().async {
+                let ts = ISO8601DateFormatter().string(from: Date())
                 if let handle = FileHandle(forWritingAtPath: fifoPath) {
                     handle.write((content + "\n").data(using: .utf8) ?? Data())
                     handle.closeFile()
+                    print("[\(ts)] daemon: wrote reply '\(content)' → \(fifoPath)")
+                } else {
+                    print("[\(ts)] daemon: FIFO gone, skipped reply '\(content)' → \(fifoPath)")
                 }
             }
         } else {
             let replyPath = "/tmp/claude-input-reply-\(requestId)"
             try? content.write(toFile: replyPath, atomically: true, encoding: .utf8)
+            let ts = ISO8601DateFormatter().string(from: Date())
+            print("[\(ts)] daemon: wrote reply '\(content)' → \(replyPath)")
         }
-
-        let ts = ISO8601DateFormatter().string(from: Date())
-        print("[\(ts)] daemon: wrote reply '\(content)' → \(pending.replyFifoPath ?? "file")")
 
         pendingInputs.removeValue(forKey: requestId)
         updateStatusTitle()
         refresh()
-        panel.orderOut(nil)
+        if pendingInputs.isEmpty {
+            panel.orderOut(nil)
+        } else {
+            // More pending inputs remain — reshow panel so user knows to answer them
+            positionPanel()
+            panel.orderFrontRegardless()
+        }
     }
 
 }

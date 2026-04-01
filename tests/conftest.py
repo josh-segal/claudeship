@@ -139,3 +139,46 @@ def mock_socket(tmp_path):
     t.join(timeout=3)
     if os.path.exists(sock_path):
         os.unlink(sock_path)
+
+
+@pytest.fixture
+def multi_message_socket():
+    """
+    Unix socket server that accepts multiple sequential connections, one per message.
+    Each nc call from a hook script is a separate connection.
+    Yields (sock_path, received_list).
+    """
+    import uuid
+
+    sock_path = f"/tmp/cs-test-{uuid.uuid4().hex[:8]}.sock"
+    received = []
+    stop_event = threading.Event()
+
+    def serve():
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.bind(sock_path)
+        s.listen(5)
+        s.settimeout(0.1)
+        while not stop_event.is_set():
+            try:
+                conn, _ = s.accept()
+                data = b""
+                while chunk := conn.recv(4096):
+                    data += chunk
+                conn.close()
+                if data:
+                    try:
+                        received.append(json.loads(data))
+                    except json.JSONDecodeError:
+                        pass
+            except socket.timeout:
+                continue
+        s.close()
+
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    yield sock_path, received
+    stop_event.set()
+    t.join(timeout=3)
+    if os.path.exists(sock_path):
+        os.unlink(sock_path)

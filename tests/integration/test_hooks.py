@@ -8,6 +8,7 @@ on stdin and capturing what they send to a mock Unix domain socket.
 import json
 import os
 import subprocess
+import tempfile
 import time
 
 import pytest
@@ -16,8 +17,53 @@ HOOKS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", ".claude", "hook
 SESSION_REGISTER_HOOK = os.path.join(
     HOOKS_DIR, "notifications", "notify-session-register.sh"
 )
+PERMISSION_HOOK = os.path.join(HOOKS_DIR, "notifications", "notify-permission.sh")
+INPUT_HOOK = os.path.join(HOOKS_DIR, "notifications", "notify-input.sh")
 
 pytestmark = pytest.mark.integration
+
+
+def run_patched_hook(
+    hook_path,
+    stdin_data: dict,
+    sock_path: str,
+    patches: list = None,
+    env: dict = None,
+    timeout: int = 10,
+) -> subprocess.CompletedProcess:
+    """
+    Run a hook with the SOCK path replaced and any additional text patches applied.
+    patches is a list of (old_str, new_str) tuples applied after the SOCK substitution.
+    """
+    with open(hook_path) as f:
+        content = f.read()
+
+    patched = content.replace('SOCK="/tmp/claude-notifier.sock"', f'SOCK="{sock_path}"')
+    for old, new in patches or []:
+        patched = patched.replace(old, new)
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
+        f.write(patched)
+        tmp = f.name
+    os.chmod(tmp, 0o755)
+
+    full_env = os.environ.copy()
+    if env:
+        full_env.update(env)
+
+    try:
+        result = subprocess.run(
+            ["bash", tmp],
+            input=json.dumps(stdin_data),
+            capture_output=True,
+            text=True,
+            env=full_env,
+            timeout=timeout,
+        )
+    finally:
+        os.unlink(tmp)
+
+    return result
 
 
 def run_hook(
@@ -250,3 +296,147 @@ class TestSessionRegisterHook:
             "/tmp/nonexistent-test.sock",
         )
         assert result.returncode == 0
+
+
+# ── notify-permission.sh clearing ────────────────────────────────────────────
+
+
+class TestPermissionHookClearing:
+    """
+    Bug: when notify-permission.sh times out (user answered in TUI instead of
+    clicking the panel), it exits 0 without sending session_inputs_clear.
+    The daemon's pendingInputs entry is never removed, so ⚡ persists until
+    the next tool fires.
+    """
+
+    def test_timeout_sends_session_inputs_clear(self, multi_message_socket):
+        """
+        FAILING: timeout path must send session_inputs_clear so the daemon
+        removes the stale pending input immediately.
+
+        Patch read timeout to 1s so the test doesn't take 30s.
+        """
+        sock_path, received = multi_message_socket
+        session_id = "test-session-perm-timeout"
+
+        run_patched_hook(
+            PERMISSION_HOOK,
+            {
+                "session_id": session_id,
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/tmp/test.py"},
+                "permission_suggestions": [],
+            },
+            sock_path,
+            patches=[("read -r -t 30", "read -r -t 1")],
+            timeout=5,
+        )
+        time.sleep(0.2)
+
+        types = [m["type"] for m in received]
+        assert "session_inputs_clear" in types, (
+            "timeout path must send session_inputs_clear — "
+            "without it ⚡ persists after TUI answer"
+        )
+        clear = next(m for m in received if m["type"] == "session_inputs_clear")
+        assert clear["session_id"] == session_id
+
+    def test_panel_answer_still_sends_inputs_clear(self, multi_message_socket):
+        """
+        Sanity check: the happy path (panel button clicked) must also result in
+        session_inputs_clear being received. This passes today via the explicit
+        send inside the `if read` branch.
+        """
+        sock_path, received = multi_message_socket
+        session_id = "test-session-perm-happy"
+
+        # Run the hook and immediately write the chosen answer to the FIFO so
+        # the read succeeds before the timeout.
+        import threading
+
+        hook_pid_holder = []
+
+        def write_fifo_reply():
+            # Give the hook time to create the FIFO and start blocking
+            time.sleep(0.3)
+            import glob as _glob
+
+            fifos = _glob.glob("/tmp/claude-fifo-*")
+            for fifo in fifos:
+                try:
+                    with open(fifo, "w") as f:
+                        f.write("Yes\n")
+                    break
+                except OSError:
+                    pass
+
+        t = threading.Thread(target=write_fifo_reply, daemon=True)
+        t.start()
+
+        run_patched_hook(
+            PERMISSION_HOOK,
+            {
+                "session_id": session_id,
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/tmp/test.py"},
+                "permission_suggestions": [],
+            },
+            sock_path,
+            patches=[("read -r -t 30", "read -r -t 5")],
+            timeout=6,
+        )
+        t.join(timeout=2)
+        time.sleep(0.2)
+
+        types = [m["type"] for m in received]
+        assert "session_inputs_clear" in types
+        clear = next(m for m in received if m["type"] == "session_inputs_clear")
+        assert clear["session_id"] == session_id
+
+
+# ── notify-input.sh clearing ──────────────────────────────────────────────────
+
+
+class TestInputHookClearing:
+    """
+    Bug: when notify-input.sh times out (user answered AskUserQuestion in TUI),
+    it exits 0 without sending session_inputs_clear. Same stale ⚡ problem.
+    """
+
+    def test_timeout_sends_session_inputs_clear(self, multi_message_socket):
+        """
+        FAILING: timeout path must send session_inputs_clear.
+
+        Patch `seq 1 600` → `seq 1 2` so the poll loop runs for ~2s instead of
+        10 minutes.
+        """
+        sock_path, received = multi_message_socket
+        session_id = "test-session-input-timeout"
+
+        run_patched_hook(
+            INPUT_HOOK,
+            {
+                "session_id": session_id,
+                "input": {
+                    "questions": [
+                        {
+                            "question": "Which format?",
+                            "options": [{"label": "JSON"}, {"label": "YAML"}],
+                        }
+                    ]
+                },
+            },
+            sock_path,
+            patches=[("seq 1 600", "seq 1 2")],
+            env={"CLAUDE_SESSION_ID": session_id},
+            timeout=8,
+        )
+        time.sleep(0.2)
+
+        types = [m["type"] for m in received]
+        assert "session_inputs_clear" in types, (
+            "timeout path must send session_inputs_clear — "
+            "without it ⚡ persists after TUI answer"
+        )
+        clear = next(m for m in received if m["type"] == "session_inputs_clear")
+        assert clear["session_id"] == session_id
