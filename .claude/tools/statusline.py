@@ -98,6 +98,30 @@ def main():
     if model_display:
         segments.append(f"\033[1;95m{model_display}{reset}")
 
+    # Context window usage (token count + percentage)
+    ctx = stdin_data.get("context_window", {})
+    ctx_pct = ctx.get("used_percentage")
+    ctx_size = ctx.get("context_window_size")
+    if ctx_pct is not None and ctx_size:
+        pct = int(ctx_pct)
+        used_tokens = int(ctx_size * ctx_pct / 100)
+        # Format as "184k/1M" style
+        if used_tokens >= 1_000_000:
+            used_str = f"{used_tokens / 1_000_000:.1f}M"
+        else:
+            used_str = f"{used_tokens // 1000}k"
+        if ctx_size >= 1_000_000:
+            size_str = f"{ctx_size // 1_000_000}M"
+        else:
+            size_str = f"{ctx_size // 1000}k"
+        if pct >= 80:
+            ctx_color = "\033[31m"  # red
+        elif pct >= 60:
+            ctx_color = "\033[33m"  # yellow
+        else:
+            ctx_color = "\033[36m"  # cyan
+        segments.append(f"\033[1m{ctx_color}{used_str}/{size_str} ({pct}%){reset}")
+
     prefix = dot.join(segments) + dot if segments else ""
 
     display_format = current_info.get("display_format", "dollar")
