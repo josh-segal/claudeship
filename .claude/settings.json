@@ -128,6 +128,10 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notifications/notify-subagent-stop.sh\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/tools/usage.py\" > /dev/null 2>&1"
           }
         ]
       }

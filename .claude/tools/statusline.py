@@ -14,8 +14,22 @@ Account is detected via CLAUDE_CONFIG_DIR env var matched against accounts.json.
 import sys
 import os
 import json
-import glob
-from datetime import datetime, timezone
+import subprocess
+
+
+def get_git_branch(cwd: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        branch = result.stdout.strip()
+        return branch or None
+    except Exception:
+        return None
 
 
 def main():
@@ -49,6 +63,43 @@ def main():
     if current_info is None:
         return
 
+    display_name = current_info.get("display_name") or current_account or ""
+    color_name = current_info.get("color", "")
+    ansi_colors = {
+        "blue": "\033[34m",
+        "green": "\033[32m",
+        "orange": "\033[33m",
+        "red": "\033[31m",
+        "purple": "\033[35m",
+        "yellow": "\033[93m",
+    }
+    reset = "\033[0m"
+    dot = "\033[90m · \033[0m"
+    color_code = ansi_colors.get(color_name, "")
+
+    segments = []
+
+    if display_name:
+        segments.append(f"\033[1m{color_code}{display_name}{reset}")
+
+    # CWD + branch
+    cwd = stdin_data.get("cwd", "")
+    if cwd:
+        home = os.path.expanduser("~")
+        cwd_display = ("~" + cwd[len(home) :]) if cwd.startswith(home) else cwd
+        branch = get_git_branch(cwd)
+        loc = f"\033[1;96m{cwd_display}{reset}"
+        if branch:
+            loc += f" \033[1;92m{branch}{reset}"
+        segments.append(loc)
+
+    # Model name
+    model_display = stdin_data.get("model", {}).get("display_name") or ""
+    if model_display:
+        segments.append(f"\033[1;95m{model_display}{reset}")
+
+    prefix = dot.join(segments) + dot if segments else ""
+
     display_format = current_info.get("display_format", "dollar")
 
     if display_format == "percent":
@@ -66,51 +117,20 @@ def main():
             parts.append(f"7d {int(seven_pct)}%")
 
         if parts:
-            print(" · ".join(parts))
+            print(prefix + "\033[1;97m" + " · ".join(parts) + reset)
 
     else:
-        # API account: scan JSONL for current month's spend
+        # API account: read monthly cost from pre-computed state (written by usage.py)
         monthly_limit = current_info.get("monthly_limit")
-        projects_dir = os.path.join(config_dir, "projects")
-
-        now = datetime.now(timezone.utc)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         monthly_cost = 0.0
-        if os.path.isdir(projects_dir):
-            for path in glob.glob(
-                os.path.join(projects_dir, "**", "*.jsonl"), recursive=True
-            ):
-                # Skip files not modified this month (fast path)
-                try:
-                    if os.path.getmtime(path) < month_start.timestamp():
-                        continue
-                except OSError:
-                    continue
-                try:
-                    with open(path, errors="replace") as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                entry = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            cost = entry.get("costUSD", 0)
-                            if not isinstance(cost, (int, float)) or cost <= 0:
-                                continue
-                            ts_str = entry.get("timestamp", "")
-                            try:
-                                ts = datetime.fromisoformat(
-                                    ts_str.replace("Z", "+00:00")
-                                )
-                                if ts >= month_start:
-                                    monthly_cost += cost
-                            except (ValueError, AttributeError):
-                                continue
-                except OSError:
-                    continue
+        state_path = os.path.expanduser("~/.claude/state.json")
+        try:
+            with open(state_path) as f:
+                state = json.load(f)
+            monthly_cost = state.get("usage", {}).get("monthly", {}).get("cost", 0.0)
+        except Exception:
+            pass
 
         if monthly_limit:
             limit_str = (
@@ -118,9 +138,9 @@ def main():
                 if monthly_limit == int(monthly_limit)
                 else f"${monthly_limit}"
             )
-            print(f"${monthly_cost:.2f} / {limit_str}")
+            print(f"{prefix}\033[1;97m${monthly_cost:.2f} / {limit_str}{reset}")
         else:
-            print(f"${monthly_cost:.2f} /mo")
+            print(f"{prefix}\033[1;97m${monthly_cost:.2f} /mo{reset}")
 
 
 if __name__ == "__main__":

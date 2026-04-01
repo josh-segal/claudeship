@@ -39,4 +39,6 @@ print(json.dumps({
   [ -S "$SOCK" ] && printf '%s' "$payload" | nc -U -w 2 "$SOCK"
 fi
 
+python3 "$CLAUDE_PROJECT_DIR/.claude/tools/usage.py" > /dev/null 2>&1 &
+
 exit 0
