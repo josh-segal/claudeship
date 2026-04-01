@@ -62,11 +62,11 @@ def notify_daemon():
 
 
 def alias_for(name: str, config_dir: str) -> str:
-    expanded = os.path.expanduser(config_dir)
-    default = os.path.expanduser("~/.claude")
-    if os.path.realpath(expanded) == os.path.realpath(default):
-        return "claude"
     return f"claude-{name}"
+
+
+def alias_cmd(name: str, config_dir: str) -> str:
+    return f"CLAUDE_CONFIG_DIR={config_dir} claude --dangerously-skip-permissions"
 
 
 def cmd_list():
@@ -95,9 +95,7 @@ def cmd_list():
         config_dir = info.get("config_dir", "")
         alias = alias_for(name, config_dir)
         if alias != "claude":
-            suggestions.append(
-                f"    alias {alias}='CLAUDE_CONFIG_DIR={config_dir} claude'"
-            )
+            suggestions.append(f"    alias {alias}='{alias_cmd(name, config_dir)}'")
 
     if suggestions:
         print("  Add to your shell profile:")
@@ -146,9 +144,8 @@ def cmd_add(args):
 
     alias = alias_for(name, config_dir)
     print(f"Added account '{name}' ({display_name})")
-    if alias != "claude":
-        print("\nAdd to your shell profile:")
-        print(f"  alias {alias}='CLAUDE_CONFIG_DIR={config_dir} claude'")
+    print("\nAdd to your shell profile:")
+    print(f"  alias {alias}='{alias_cmd(name, config_dir)}'")
 
     notify_daemon()
 
@@ -180,6 +177,108 @@ def cmd_current():
     print(current if current else "(unknown)")
 
 
+COLOR_DISPLAY = {
+    "blue": "\033[34m●\033[0m blue",
+    "green": "\033[32m●\033[0m green",
+    "orange": "\033[33m●\033[0m orange",
+    "red": "\033[31m●\033[0m red",
+    "purple": "\033[35m●\033[0m purple",
+    "yellow": "\033[93m●\033[0m yellow",
+}
+
+
+def prompt(label: str, default: str = "") -> str:
+    suffix = f" [{default}]" if default else ""
+    try:
+        val = input(f"  {label}{suffix}: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        sys.exit(0)
+    return val or default
+
+
+def cmd_setup():
+    print()
+    print("  Account Setup Wizard")
+    print("  " + "─" * 40)
+    print("  Add one account at a time. Press Enter to accept defaults.")
+    print("  Leave name blank when done.")
+    print()
+
+    accounts = load_accounts()
+    added = []
+
+    while True:
+        name = prompt("Account name (e.g. personal, work, edu) or blank to finish")
+        if not name:
+            break
+
+        default_dir = "~/.claude" if name == "personal" else f"~/.claude-{name}"
+        config_dir = prompt("Config dir", default_dir)
+        expanded = os.path.expanduser(config_dir)
+        if not os.path.isdir(expanded):
+            try:
+                create = (
+                    input(f"  '{config_dir}' doesn't exist. Create it? [Y/n]: ")
+                    .strip()
+                    .lower()
+                )
+            except (EOFError, KeyboardInterrupt):
+                print()
+                sys.exit(0)
+            if create in ("", "y", "yes"):
+                os.makedirs(expanded, exist_ok=True)
+                print(f"  Created {config_dir}")
+            else:
+                print("  Skipping.")
+                print()
+                continue
+
+        print(f"  Colors: {', '.join(COLOR_DISPLAY[c] for c in sorted(VALID_COLORS))}")
+        color_defaults = {"personal": "blue", "work": "green", "edu": "orange"}
+        default_color = color_defaults.get(name, "blue")
+        while True:
+            color = prompt("Color", default_color)
+            if color in VALID_COLORS:
+                break
+            print(f"  Invalid color. Choose from: {', '.join(sorted(VALID_COLORS))}")
+
+        display_name = prompt("Display name", name.capitalize())
+
+        accounts[name] = {
+            "display_name": display_name,
+            "config_dir": config_dir,
+            "color": color,
+        }
+        added.append(name)
+        print(f"  ✓ Added '{name}'")
+        print()
+
+    if not added:
+        print("  No accounts added.")
+        print()
+        return
+
+    save_accounts(accounts)
+    notify_daemon()
+
+    print()
+    print("  Done! Accounts registered:")
+    aliases = []
+    for name in added:
+        info = accounts[name]
+        alias = alias_for(name, info["config_dir"])
+        print(f"  ● {name} ({info['display_name']})  →  {alias}")
+        aliases.append(f"alias {alias}='{alias_cmd(name, info['config_dir'])}'")
+
+    if aliases:
+        print()
+        print("  Add to your shell profile (~/.zshrc or ~/.bashrc):")
+        for a in aliases:
+            print(f"    {a}")
+    print()
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -196,6 +295,8 @@ def main():
         cmd_remove(rest)
     elif command == "current":
         cmd_current()
+    elif command == "setup":
+        cmd_setup()
     else:
         print(f"Unknown command: {command}", file=sys.stderr)
         print(__doc__)
