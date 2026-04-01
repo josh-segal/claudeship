@@ -98,6 +98,7 @@ class PanelContentView: NSView {
     func refresh(
         inputs: [InputRow],
         rows: [Row],
+        spinnerChar: String = "⣷",
         onFocus: @escaping (String) -> Void,
         onAnswer: @escaping (String, String) -> Void
     ) {
@@ -195,9 +196,9 @@ class PanelContentView: NSView {
             if row.isWorking {
                 if let tool = row.currentTool {
                     let cmd = row.currentCommand.map { " \($0)" } ?? ""
-                    text = "⣷  \(row.displayName)  —  \(tool):\(cmd)"
+                    text = "\(spinnerChar)  \(row.displayName)  —  \(tool):\(cmd)"
                 } else {
-                    text = "⣷  \(row.displayName)  —  working"
+                    text = "\(spinnerChar)  \(row.displayName)  —  working"
                 }
                 color = .labelColor
             } else {
@@ -266,6 +267,7 @@ class ClaudeNotifierDaemon: NSObject {
         var options: [String]
         var sessionName: String
         var sessionId: String?
+        var replyFifoPath: String?
     }
     var pendingInputs: [String: PendingInput] = [:]
 
@@ -411,6 +413,7 @@ class ClaudeNotifierDaemon: NSObject {
         }
         panelContent.refresh(
             inputs: inputs, rows: rows,
+            spinnerChar: spinnerFrames[spinnerFrame],
             onFocus: { [weak self] cwd in
                 self?.focusGhostty(cwd: cwd)
                 self?.panel.orderOut(nil)
@@ -485,6 +488,7 @@ class ClaudeNotifierDaemon: NSObject {
                 guard let self = self else { return }
                 self.spinnerFrame = (self.spinnerFrame + 1) % self.spinnerFrames.count
                 self.updateStatusTitle()
+                if self.panel.isVisible { self.refresh() }
             }
             timer.resume()
             spinnerTimer = timer
@@ -777,10 +781,12 @@ class ClaudeNotifierDaemon: NSObject {
         let sessionId = json["session_id"] as? String
         let sessionName = sessionId.flatMap { sessions[$0]?.displayName }
             ?? (json["subtitle"] as? String ?? "")
+        let replyFifoPath = json["reply_fifo"] as? String
 
         pendingInputs[requestId] = PendingInput(
             requestId: requestId, question: question, options: options,
-            sessionName: sessionName, sessionId: sessionId)
+            sessionName: sessionName, sessionId: sessionId,
+            replyFifoPath: replyFifoPath)
 
         updateStatusTitle()
         // Auto-open panel
@@ -817,14 +823,23 @@ class ClaudeNotifierDaemon: NSObject {
     }
 
     func writeReply(requestId: String, content: String) {
-        let replyPath = "/tmp/claude-input-reply-\(requestId)"
-        do {
-            try content.write(toFile: replyPath, atomically: true, encoding: .utf8)
-            let ts = ISO8601DateFormatter().string(from: Date())
-            print("[\(ts)] daemon: wrote reply '\(content)' → \(replyPath)")
-        } catch {
-            fputs("daemon: failed to write reply: \(error.localizedDescription)\n", stderr)
+        guard let pending = pendingInputs[requestId] else { return }
+
+        if let fifoPath = pending.replyFifoPath {
+            DispatchQueue.global().async {
+                if let handle = FileHandle(forWritingAtPath: fifoPath) {
+                    handle.write((content + "\n").data(using: .utf8) ?? Data())
+                    handle.closeFile()
+                }
+            }
+        } else {
+            let replyPath = "/tmp/claude-input-reply-\(requestId)"
+            try? content.write(toFile: replyPath, atomically: true, encoding: .utf8)
         }
+
+        let ts = ISO8601DateFormatter().string(from: Date())
+        print("[\(ts)] daemon: wrote reply '\(content)' → \(pending.replyFifoPath ?? "file")")
+
         pendingInputs.removeValue(forKey: requestId)
         updateStatusTitle()
         refresh()

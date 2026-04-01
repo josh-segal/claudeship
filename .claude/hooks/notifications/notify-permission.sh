@@ -11,7 +11,7 @@
 SOCK="/tmp/claude-notifier.sock"
 LOG="/tmp/claude-notifier.log"
 REQUEST_ID="$$"
-REPLY_FILE="/tmp/claude-input-reply-${REQUEST_ID}"
+FIFO_PATH="/tmp/claude-fifo-$$"
 
 input=$(cat)
 subtitle="$(basename "$PWD")"
@@ -55,6 +55,15 @@ suggestions_json=$(echo "$input" | python3 -c "import json,sys; d=json.load(sys.
 
 echo "[$(date '+%H:%M:%S.%3N')] notify-permission.sh: $tool (id=$REQUEST_ID)" >> "$LOG"
 
+mkfifo "$FIFO_PATH"
+
+_cleanup() {
+    local status=$?
+    echo "[$(date '+%H:%M:%S.%3N')] notify-permission.sh EXIT: status=$status id=$REQUEST_ID" >> "$LOG"
+    rm -f "$FIFO_PATH"
+}
+trap _cleanup EXIT
+
 if [ ! -S "$SOCK" ]; then
     exit 0
 fi
@@ -69,18 +78,19 @@ print(json.dumps({
     'question':   sys.argv[2],
     'options':    json.loads(sys.argv[3]),
     'subtitle':   sys.argv[4],
-    'session_id': sys.argv[5]
-}))" "$REQUEST_ID" "$tool" "$options_json" "$subtitle" "$SESSION_ID" 2>/dev/null)
+    'session_id': sys.argv[5],
+    'reply_fifo': sys.argv[6]
+}))" "$REQUEST_ID" "$tool" "$options_json" "$subtitle" "$SESSION_ID" "$FIFO_PATH" 2>/dev/null)
 
 printf '%s' "$payload" | nc -U -w 2 "$SOCK"
 
-# Poll for reply (up to 10 minutes)
-# Reply is the chosen option label; map back to behavior via behaviors_json
-for i in $(seq 1 600); do
-    if [ -f "$REPLY_FILE" ]; then
-        chosen=$(cat "$REPLY_FILE")
-        rm -f "$REPLY_FILE"
-        raw_behavior=$(python3 -c "
+# Block until daemon writes the reply (or 30s timeout → fall through to Claude Code TUI)
+# Open read-write (<>) so the open() itself doesn't block waiting for a writer;
+# -t 30 then applies to the read, giving us a true 30s timeout.
+chosen=""
+exec 3<>"$FIFO_PATH"
+if read -r -t 30 chosen <&3; then
+    raw_behavior=$(python3 -c "
 import json, sys
 options   = json.loads(sys.argv[1])
 behaviors = json.loads(sys.argv[2])
@@ -91,8 +101,10 @@ try:
 except ValueError:
     print('deny')
 " "$options_json" "$behaviors_json" "$chosen")
-        echo "[$(date '+%H:%M:%S.%3N')] notify-permission.sh: reply='$chosen' → raw_behavior=$raw_behavior" >> "$LOG"
-        python3 -c "
+    echo "[$(date '+%H:%M:%S.%3N')] notify-permission.sh: reply='$chosen' → raw_behavior=$raw_behavior" >> "$LOG"
+    # Immediately clear the notification — we have the answer, no need to wait
+    printf '%s' "{\"type\":\"session_inputs_clear\",\"session_id\":\"$SESSION_ID\"}" | nc -U -w 1 "$SOCK" 2>/dev/null
+    python3 -c "
 import json, sys, os
 raw      = sys.argv[1]
 sugg     = json.loads(sys.argv[2])
@@ -147,10 +159,10 @@ print(json.dumps({
     }
 }))
 " "$raw_behavior" "$suggestions_json" "$CLAUDE_PROJECT_DIR" "$LOG"
-        exit 2
-    fi
-    sleep 1
-done
+    exec 3>&-
+    exit 2
+fi
+exec 3>&-
 
 # Timeout — fall through to terminal dialog
 echo "[$(date '+%H:%M:%S.%3N')] notify-permission.sh: timeout, falling through" >> "$LOG"
