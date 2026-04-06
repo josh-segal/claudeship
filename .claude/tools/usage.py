@@ -63,6 +63,150 @@ def _estimate_cost(entry: dict) -> float:
     return (inp * p_inp + out * p_out + cr * p_cr + cw * p_cw) / 1_000_000
 
 
+def compute_daily_history(projects_dir: str, now: datetime) -> dict:
+    """Compute per-day cost for every day of the current month. Returns {day_number: cost}."""
+    import calendar
+
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start = today_start.replace(day=1)
+    days_in_month = calendar.monthrange(now.year, now.month)[1]
+
+    daily = {d: 0.0 for d in range(1, days_in_month + 1)}
+
+    if os.path.isdir(projects_dir):
+        pattern = os.path.join(projects_dir, "**", "*.jsonl")
+        for jsonl_path in glob.glob(pattern, recursive=True):
+            try:
+                with open(jsonl_path, "r", errors="replace") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if entry.get("type") != "assistant":
+                            continue
+                        ts = parse_ts(entry.get("timestamp"))
+                        if ts is None:
+                            continue
+                        if ts >= month_start and ts < month_start.replace(
+                            day=days_in_month,
+                            hour=23,
+                            minute=59,
+                            second=59,
+                            microsecond=999999,
+                        ) + timedelta(microseconds=1):
+                            cost = _estimate_cost(entry)
+                            if cost:
+                                daily[ts.day] += cost
+            except OSError:
+                continue
+
+    return daily
+
+
+def _heat_color(cost: float, max_cost: float) -> str:
+    """Return ANSI background color escape for a cost level (green gradient)."""
+    if max_cost <= 0 or cost <= 0:
+        return "\033[48;5;236m"  # dark gray for $0
+    ratio = min(cost / max_cost, 1.0)
+    # 5-stop green gradient: dark → bright
+    stops = [22, 28, 34, 40, 46]
+    idx = ratio * (len(stops) - 1)
+    color = stops[min(int(idx + 0.5), len(stops) - 1)]
+    return f"\033[48;5;{color}m"
+
+
+_RESET = "\033[0m"
+
+
+def render_chart(
+    daily: dict, now: datetime, total_cost: float, label: str, weekly_limit: float = 0
+):
+    """Render a heatmap calendar of daily costs."""
+    import calendar
+
+    days_in_month = calendar.monthrange(now.year, now.month)[1]
+    today = now.day
+    first_weekday = calendar.weekday(now.year, now.month, 1)
+
+    max_cost = max(daily.values()) if daily else 0
+    if max_cost == 0:
+        max_cost = 1.0
+
+    cell_w = 5  # width per day cell
+    month_name = now.strftime("%B %Y")
+    print()
+    print(f"  {label} — {month_name}")
+    print()
+
+    # Header
+    days_header = "  "
+    for name in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]:
+        days_header += f"{name:^{cell_w}}"
+    print(days_header)
+
+    # Build weeks
+    d = 1
+    dow = first_weekday  # 0=Monday
+
+    while d <= days_in_month:
+        block_row = "  "
+        value_row = "  "
+        week_cost = 0.0
+
+        # Leading blanks
+        for _ in range(dow):
+            block_row += " " * cell_w
+            value_row += " " * cell_w
+
+        for col in range(dow, 7):
+            if d > days_in_month:
+                block_row += " " * cell_w
+                value_row += " " * cell_w
+            elif d > today:
+                block_row += f"{'':^{cell_w}}"
+                value_row += f"{'—':^{cell_w}}"
+                d += 1
+            else:
+                cost = daily[d]
+                week_cost += cost
+                color = _heat_color(cost, max_cost)
+                block_row += f" {color}   {_RESET} "
+                if cost >= 100:
+                    val = f"${cost:.0f}"
+                elif cost > 0:
+                    val = f"${cost:.0f}"
+                else:
+                    val = "$0"
+                value_row += f"{val:^{cell_w}}"
+                d += 1
+
+        # Weekly summary
+        if weekly_limit > 0 and week_cost > 0:
+            pct = (week_cost / weekly_limit) * 100
+            week_summary = f"  ${week_cost:>5.0f}  ({pct:.0f}%)"
+        elif week_cost > 0:
+            week_summary = f"  ${week_cost:>5.0f}"
+        else:
+            week_summary = ""
+
+        print(block_row + week_summary)
+        print(value_row)
+        dow = 0
+
+    print()
+    if weekly_limit > 0:
+        monthly_limit = weekly_limit * 4
+        pct = (total_cost / monthly_limit) * 100
+        print(f"  Total: ${total_cost:,.2f} / ${monthly_limit:,.0f}  ({pct:.0f}%)")
+    else:
+        print(f"  Total: ${total_cost:,.2f}")
+    print()
+
+
 def compute_usage(projects_dir: str, now: datetime) -> dict:
     """Compute usage buckets from JSONL files. Returns daily/weekly/monthly dicts."""
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -164,6 +308,7 @@ def load_accounts() -> dict:
 def main():
     use_json = "--json" in sys.argv
     use_detail = "--detail" in sys.argv
+    use_history = "--history" in sys.argv
     now = datetime.now(timezone.utc)
 
     accounts = load_accounts()
@@ -215,6 +360,23 @@ def main():
             }
         }
     )
+
+    if use_history:
+        if per_account:
+            for name, info in accounts.items():
+                config_dir = os.path.expanduser(info.get("config_dir", ""))
+                projects_dir = os.path.join(config_dir, "projects")
+                acct_daily = compute_daily_history(projects_dir, now)
+                total = sum(acct_daily.values())
+                display = info.get("display_name", name)
+                monthly_limit = info.get("monthly_limit", 0)
+                weekly_limit = monthly_limit / 4 if monthly_limit else 0
+                render_chart(acct_daily, now, total, display, weekly_limit)
+        else:
+            daily = compute_daily_history(os.path.expanduser("~/.claude/projects"), now)
+            total = sum(daily.values())
+            render_chart(daily, now, total, "Claude Code")
+        return
 
     if use_json:
         output = {"accounts": {}, "total": {}}
