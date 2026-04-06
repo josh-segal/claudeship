@@ -115,7 +115,7 @@ function listWorktreeNames() {
 // ---------------------------------------------------------------------------
 // Server
 // ---------------------------------------------------------------------------
-const server = new index_js_1.Server({ name: "workspace", version: "1.0.0" }, { capabilities: { tools: {} } });
+const server = new index_js_1.Server({ name: "workspace", version: "0.0.1" }, { capabilities: { tools: {} } });
 // ---------------------------------------------------------------------------
 // Tool definitions
 // ---------------------------------------------------------------------------

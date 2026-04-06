@@ -9,7 +9,7 @@
 set -e
 
 APP="/Applications/ClaudeNotifier.app"
-SWIFT_SRC="$(dirname "$0")/../tools/ClaudeNotifier.swift"
+SWIFT_SRC="$(dirname "$0")/ClaudeNotifier.swift"
 PLIST="$HOME/Library/LaunchAgents/com.claudeship.notifier.plist"
 LABEL="com.claudeship.notifier"
 DOMAIN="gui/$(id -u)"

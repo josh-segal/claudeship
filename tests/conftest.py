@@ -6,8 +6,8 @@ import threading
 
 import pytest
 
-TOOLS_DIR = os.path.join(os.path.dirname(__file__), "..", ".claude", "tools")
-HOOKS_DIR = os.path.join(os.path.dirname(__file__), "..", ".claude", "hooks")
+TOOLS_DIR = os.path.join(os.path.dirname(__file__), "..", "src", "tools")
+HOOKS_DIR = os.path.join(os.path.dirname(__file__), "..", "src", "hooks")
 
 # Ensure tools are importable in every test session
 if TOOLS_DIR not in sys.path:

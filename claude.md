@@ -1,19 +1,25 @@
-This project is an opinionated Claude Code setup for multi-account workflows, lifecycle hooks, MCP server configs, and sandboxed workspaces.
+This project is a Claude Code plugin providing multi-account workflows, lifecycle hooks, usage tracking, quality gates, and macOS notifications.
+
+## Plugin Structure
+
+```
+.claude-plugin/plugin.json    — manifest
+hooks/hooks.json              — hook registrations
+skills/                       — /claudeship:usage, /claudeship:setup, etc.
+src/tools/                    — Python tools (usage, statusline, accounts, state)
+src/hooks/                    — shell hooks (safety, quality-gate, notifications)
+src/notifier/                 — ClaudeNotifier macOS app (optional, separate install)
+```
 
 ## ClaudeNotifier
 
 The daemon runs as a LaunchAgent from `/Applications/ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier`.
-Source is at `~/.claude/tools/ClaudeNotifier.swift`. Editing the `.swift` file via Claude auto-rebuilds and reloads.
+Source is at `src/notifier/ClaudeNotifier.swift`. Editing the `.swift` file via Claude auto-rebuilds and reloads.
 
 ### Manual full reload
 
 ```bash
-cd ~/.claude
-swiftc tools/ClaudeNotifier.swift -o tools/ClaudeNotifier -framework Cocoa
-cp tools/ClaudeNotifier /Applications/ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier
-codesign --force --sign - /Applications/ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier
-launchctl unload ~/Library/LaunchAgents/com.claudeship.notifier.plist
-launchctl load ~/Library/LaunchAgents/com.claudeship.notifier.plist
+bash src/notifier/rebuild-notifier.sh
 ```
 
 ### Logs
@@ -22,15 +28,6 @@ launchctl load ~/Library/LaunchAgents/com.claudeship.notifier.plist
 tail -f /tmp/claude-notifier.log
 ```
 
-## Tools and Hooks
+## Development
 
-All hooks and tools live at the user level in `~/.claude/`:
-- `~/.claude/tools/` — ClaudeNotifier, usage.py, statusline.py, accounts.py, state.py
-- `~/.claude/hooks/` — lifecycle hooks and notification scripts
-- `~/.claude/settings.json` — hook configuration (user-level, applies to all projects)
-
-## Commands
-
-### /usage
-Run `python3 $HOME/.claude/tools/usage.py` and report the output. Shows daily, weekly,
-and monthly Claude Code spend and token counts.
+When working on this repo, the plugin is loaded via `claude --plugin-dir .` from the repo root. The `.claude/settings.json` contains dev-only config (deny rules, auto-rebuild hook).

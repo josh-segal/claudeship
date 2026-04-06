@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claudeship-local",
+  "owner": {
+    "name": "Joshua Segal",
+    "email": "josh@joshuasegal.com"
+  },
+  "plugins": [
+    {
+      "name": "claudeship",
+      "description": "Multi-account workflows, usage tracking, quality gates, and macOS notifications",
+      "source": "./"
+    }
+  ]
+}

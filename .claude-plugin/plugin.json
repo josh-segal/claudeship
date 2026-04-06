@@ -1,0 +1,11 @@
+{
+  "name": "claudeship",
+  "version": "0.0.1",
+  "description": "Multi-account workflows, usage tracking, quality gates, and macOS notifications for Claude Code",
+  "author": {
+    "name": "Joshua Segal"
+  },
+  "repository": "https://github.com/joshuasegal/claudeship",
+  "license": "MIT",
+  "keywords": ["notifications", "usage", "accounts", "quality-gate", "statusline"]
+}

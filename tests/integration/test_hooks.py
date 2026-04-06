@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-HOOKS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", ".claude", "hooks")
+HOOKS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "src", "hooks")
 SESSION_REGISTER_HOOK = os.path.join(
     HOOKS_DIR, "notifications", "notify-session-register.sh"
 )

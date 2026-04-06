@@ -9,5 +9,20 @@
       "Write(~/.*/**)",
       "Bash(sudo *)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 120,
+            "statusMessage": "Rebuilding ClaudeNotifier...",
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; if [[ \"$f\" == *\"src/notifier/ClaudeNotifier.swift\" ]]; then bash \"$CLAUDE_PROJECT_DIR/src/notifier/rebuild-notifier.sh\"; fi; } || true"
+          }
+        ]
+      }
+    ]
   }
 }

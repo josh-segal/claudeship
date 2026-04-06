@@ -1,0 +1,59 @@
+name: Release ClaudeNotifier
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build app bundle
+        run: |
+          mkdir -p ClaudeNotifier.app/Contents/MacOS
+          mkdir -p ClaudeNotifier.app/Contents/Resources
+
+          # Compile
+          swiftc -swift-version 5 \
+            src/notifier/ClaudeNotifier.swift \
+            -o ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier \
+            -framework Cocoa
+
+          # Info.plist with version stamped
+          sed "s/\${VERSION}/${{ steps.version.outputs.version }}/g" \
+            src/notifier/Info.plist > ClaudeNotifier.app/Contents/Info.plist
+
+          # Codesign
+          codesign --force --deep --sign - ClaudeNotifier.app
+
+      - name: Package
+        run: zip -r ClaudeNotifier.zip ClaudeNotifier.app
+
+      - name: Compute SHA256
+        id: sha
+        run: echo "sha256=$(shasum -a 256 ClaudeNotifier.zip | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            ClaudeNotifier.zip
+
+      - name: Print SHA256
+        run: |
+          echo "::notice::SHA256: ${{ steps.sha.outputs.sha256 }}"
+          echo "Update Casks/claude-notifier.rb with:"
+          echo "  version \"${{ steps.version.outputs.version }}\""
+          echo "  sha256 \"${{ steps.sha.outputs.sha256 }}\""

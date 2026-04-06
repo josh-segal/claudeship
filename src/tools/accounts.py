@@ -4,7 +4,7 @@ accounts.py — Claude account registry CLI
 
 Commands:
   list                                      Show all accounts, mark current
-  add <name> --config-dir <path> --color <c> [--display-name <n>]
+  add <name> --config-dir <path> --color <c> [--display-name <n>] [--link-to <account>]
   remove <name>
   current                                   Detect from CLAUDE_CONFIG_DIR
 """
@@ -61,6 +61,32 @@ def notify_daemon():
         pass  # daemon not running, that's fine
 
 
+LINKABLE = ["plugins", "settings.json"]
+
+
+def link_account(target_dir: str, source_dir: str):
+    """Symlink plugins/ and settings.json from target to source account."""
+    target = os.path.expanduser(target_dir)
+    source = os.path.expanduser(source_dir)
+    linked = []
+    for item in LINKABLE:
+        src_path = os.path.join(source, item)
+        tgt_path = os.path.join(target, item)
+        if not os.path.exists(src_path):
+            print(f"  ⚠ Source {src_path} does not exist, skipping")
+            continue
+        if os.path.islink(tgt_path):
+            os.unlink(tgt_path)
+        elif os.path.exists(tgt_path):
+            backup = tgt_path + ".bak"
+            os.rename(tgt_path, backup)
+            print(f"  Backed up {item} → {item}.bak")
+        os.symlink(src_path, tgt_path)
+        linked.append(item)
+        print(f"  ✓ Linked {item} → {src_path}")
+    return linked
+
+
 def alias_for(name: str, config_dir: str) -> str:
     return f"claude-{name}"
 
@@ -112,6 +138,11 @@ def cmd_add(args):
     parser.add_argument("--config-dir", required=True)
     parser.add_argument("--color", required=True)
     parser.add_argument("--display-name", default=None)
+    parser.add_argument(
+        "--link-to",
+        default=None,
+        help="Account name to link plugins/ and settings.json from",
+    )
     parsed = parser.parse_args(args)
 
     name = parsed.name
@@ -135,6 +166,18 @@ def cmd_add(args):
         sys.exit(1)
 
     accounts = load_accounts()
+
+    if parsed.link_to:
+        if parsed.link_to not in accounts:
+            print(
+                f"Error: account '{parsed.link_to}' not found to link to",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        source_dir = accounts[parsed.link_to]["config_dir"]
+        print(f"\nLinking to '{parsed.link_to}' ({source_dir}):")
+        link_account(config_dir, source_dir)
+
     accounts[name] = {
         "display_name": display_name,
         "config_dir": config_dir,
@@ -143,7 +186,7 @@ def cmd_add(args):
     save_accounts(accounts)
 
     alias = alias_for(name, config_dir)
-    print(f"Added account '{name}' ({display_name})")
+    print(f"\nAdded account '{name}' ({display_name})")
     print("\nAdd to your shell profile:")
     print(f"  alias {alias}='{alias_cmd(name, config_dir)}'")
 
@@ -244,6 +287,16 @@ def cmd_setup():
             print(f"  Invalid color. Choose from: {', '.join(sorted(VALID_COLORS))}")
 
         display_name = prompt("Display name", name.capitalize())
+
+        # Offer to link plugins/settings from an existing account
+        existing = [n for n in list(accounts.keys()) + added if n != name]
+        if existing:
+            print("  Link plugins & settings from an existing account?")
+            print(f"  Available: {', '.join(existing)} (blank to skip)")
+            link_target = prompt("Link to account", "").strip()
+            if link_target and link_target in accounts:
+                source_dir = accounts[link_target]["config_dir"]
+                link_account(config_dir, source_dir)
 
         accounts[name] = {
             "display_name": display_name,

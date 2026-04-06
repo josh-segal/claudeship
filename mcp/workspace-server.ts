@@ -101,7 +101,7 @@ function listWorktreeNames(): string[] {
 // ---------------------------------------------------------------------------
 
 const server = new Server(
-  { name: "workspace", version: "1.0.0" },
+  { name: "workspace", version: "0.0.1" },
   { capabilities: { tools: {} } },
 );
 
