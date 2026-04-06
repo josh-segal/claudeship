@@ -34,6 +34,13 @@ agent_name = (
     ''
 )
 
+# Extract subagent type (e.g., 'Explore', 'Plan', 'general-purpose')
+agent_type = (
+    d.get('tool_input', {}).get('subagent_type', '') or
+    d.get('agent_type', '')                           or
+    ''
+)
+
 if not parent_session_id or not agent_id:
     sys.exit(0)
 
@@ -41,7 +48,8 @@ print(json.dumps({
     'type':              'subagent_start',
     'session_id':        agent_id,
     'parent_session_id': parent_session_id,
-    'agent_name':        agent_name
+    'agent_name':        agent_name,
+    'agent_type':        agent_type
 }))
 " "$input" 2>/dev/null)
 

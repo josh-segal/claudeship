@@ -74,7 +74,7 @@ class PanelContentView: NSView {
         var currentTool: String?
         var currentCommand: String?
         var isDone: Bool
-        var agents: [(id: String, name: String)]
+        var agentGroups: [(type: String, count: Int)]
         var account: String? = nil
         var accountColor: NSColor? = nil
     }
@@ -205,11 +205,12 @@ class PanelContentView: NSView {
             } else {
                 buildSessionRow(row: row, prefix: "○  \(row.displayName)", suffix: "  —  idle", cwd: row.cwd, onFocus: onFocus)
             }
-            for agent in row.agents {
+            for group in row.agentGroups {
+                let label = "↳  \(group.type) ×\(group.count)"
                 addRow(
                     indent: 16,
-                    text: "↳  \(agent.name.isEmpty ? "subagent" : agent.name)",
-                    color: .labelColor,
+                    text: label,
+                    color: .secondaryLabelColor,
                     cwd: row.cwd,
                     onFocus: onFocus
                 )
@@ -341,7 +342,8 @@ class ClaudeNotifierDaemon: NSObject {
     struct AgentSession {
         var total: Int
         var completed: Int
-        var agents: [(id: String, name: String)]
+        var agents: [(id: String, name: String, type: String)]
+        var pendingTurnStop: Bool = false
     }
     var agentSessions: [String: AgentSession] = [:]
 
@@ -364,6 +366,12 @@ class ClaudeNotifierDaemon: NSObject {
         var color: NSColor
     }
     var accountConfigs: [String: AccountConfig] = [:]
+
+    // ── Sound on completion ──────────────────────────────────────────────────
+    var soundEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "soundOnComplete") }
+        set { UserDefaults.standard.set(newValue, forKey: "soundOnComplete") }
+    }
 
     // ── Status bar ────────────────────────────────────────────────────────────
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -469,8 +477,8 @@ class ClaudeNotifierDaemon: NSObject {
         statusItem.menu = nil
         if let btn = statusItem.button {
             btn.target = self
-            btn.action = #selector(togglePanel(_:))
-            btn.sendAction(on: .leftMouseDown)
+            btn.action = #selector(statusItemClicked(_:))
+            btn.sendAction(on: [.leftMouseDown, .rightMouseDown])
         }
 
         globalMonitor = NSEvent.addGlobalMonitorForEvents(
@@ -489,14 +497,37 @@ class ClaudeNotifierDaemon: NSObject {
         }
     }
 
-    @objc func togglePanel(_ sender: NSStatusBarButton) {
-        if panel.isVisible {
-            panel.orderOut(nil)
+    @objc func statusItemClicked(_ sender: NSStatusBarButton) {
+        guard let event = NSApp.currentEvent else { return }
+        if event.type == .rightMouseDown {
+            showContextMenu()
         } else {
-            refresh()
-            positionPanel()
-            panel.orderFrontRegardless()
+            if panel.isVisible {
+                panel.orderOut(nil)
+            } else {
+                refresh()
+                positionPanel()
+                panel.orderFrontRegardless()
+            }
         }
+    }
+
+    func showContextMenu() {
+        let menu = NSMenu()
+        let soundItem = NSMenuItem(
+            title: "Sound on completion",
+            action: #selector(toggleSound(_:)),
+            keyEquivalent: "")
+        soundItem.target = self
+        soundItem.state = soundEnabled ? .on : .off
+        menu.addItem(soundItem)
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil  // restore click-to-panel after menu closes
+    }
+
+    @objc func toggleSound(_ sender: NSMenuItem) {
+        soundEnabled.toggle()
     }
 
     func positionPanel() {
@@ -520,10 +551,18 @@ class ClaudeNotifierDaemon: NSObject {
         }
         let rows = sessions.values.sorted { $0.displayName < $1.displayName }.map { s in
             let acctColor = s.account.flatMap { accountConfigs[$0]?.color }
+            let groups: [(type: String, count: Int)]
+            if let agents = agentSessions[s.id]?.agents, !agents.isEmpty {
+                var typeCounts: [String: Int] = [:]
+                for a in agents { typeCounts[a.type, default: 0] += 1 }
+                groups = typeCounts.sorted { $0.key < $1.key }.map { (type: $0.key, count: $0.value) }
+            } else {
+                groups = []
+            }
             return PanelContentView.Row(
                 cwd: s.cwd, displayName: s.displayName, isWorking: s.isWorking,
                 currentTool: s.currentTool, currentCommand: s.currentCommand,
-                isDone: s.isDone, agents: agentSessions[s.id]?.agents ?? [],
+                isDone: s.isDone, agentGroups: groups,
                 account: s.account, accountColor: acctColor)
         }
         panelContent.refresh(
@@ -843,9 +882,22 @@ class ClaudeNotifierDaemon: NSObject {
     func handleSessionStop(_ json: [String: Any]) {
         guard let sessionId = json["session_id"] as? String else { return }
         let ts = ISO8601DateFormatter().string(from: Date())
-        if agentSessions.removeValue(forKey: sessionId) != nil {
-            print("[\(ts)] daemon: cleared subagent state for session \(sessionId)")
+
+        // If subagents are still active, defer the turn completion
+        if var agentState = agentSessions[sessionId], !agentState.agents.isEmpty {
+            agentState.pendingTurnStop = true
+            agentSessions[sessionId] = agentState
+            print("[\(ts)] daemon: turn_stop deferred for \(sessionId) — \(agentState.agents.count) subagent(s) still active")
+            return
         }
+
+        // No active subagents — complete immediately
+        agentSessions.removeValue(forKey: sessionId)
+        completeTurnStop(sessionId: sessionId)
+    }
+
+    func completeTurnStop(sessionId: String) {
+        let ts = ISO8601DateFormatter().string(from: Date())
         if sessions[sessionId] != nil {
             sessions[sessionId]!.isWorking = false
             sessions[sessionId]!.currentTool = nil
@@ -853,6 +905,7 @@ class ClaudeNotifierDaemon: NSObject {
             sessions[sessionId]!.isDone = true
             sessions[sessionId]!.doneAt = Date()
             print("[\(ts)] daemon: session done id=\(sessionId)")
+            if soundEnabled { NSSound(named: "Ping")?.play() }
         }
         updateStatusTitle()
         updateSpinnerTimer()
@@ -882,15 +935,17 @@ class ClaudeNotifierDaemon: NSObject {
             return
         }
         let agentName = json["agent_name"] as? String ?? ""
+        let agentType = json["agent_type"] as? String
+        let resolvedType = (agentType?.isEmpty == false ? agentType! : "Subagent")
         let ts = ISO8601DateFormatter().string(from: Date())
         print(
-            "[\(ts)] daemon: subagent_start parent=\(parentId) agent=\(agentId) name='\(agentName)'"
+            "[\(ts)] daemon: subagent_start parent=\(parentId) agent=\(agentId) type='\(resolvedType)' name='\(agentName)'"
         )
         if agentSessions[parentId] == nil {
             agentSessions[parentId] = AgentSession(total: 0, completed: 0, agents: [])
         }
         agentSessions[parentId]!.total += 1
-        agentSessions[parentId]!.agents.append((id: agentId, name: agentName))
+        agentSessions[parentId]!.agents.append((id: agentId, name: agentName, type: resolvedType))
         refresh()
     }
 
@@ -915,6 +970,12 @@ class ClaudeNotifierDaemon: NSObject {
             let progress = "(\(session.completed)/\(session.total))"
             let message = "\(agentName) done \(progress)"
             print("[\(ts)] daemon: \(message) parent=\(parentId)")
+
+            // If all subagents done and turn_stop was deferred, complete now
+            if session.agents.isEmpty && session.pendingTurnStop {
+                agentSessions.removeValue(forKey: parentId)
+                completeTurnStop(sessionId: parentId)
+            }
             refresh()
         } else {
             print("[\(ts)] daemon: subagent_stop with no tracked parent \(parentId)")
