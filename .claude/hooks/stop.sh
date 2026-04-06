@@ -13,6 +13,6 @@ if [ -f /tmp/claude-anim-pid ]; then
   rm -f /tmp/claude-anim-pid
 fi
 
-python3 "$CLAUDE_PROJECT_DIR/.claude/tools/usage.py" > /dev/null 2>&1 &
+python3 "$HOME/.claude/tools/usage.py" > /dev/null 2>&1 &
 
 exit 0

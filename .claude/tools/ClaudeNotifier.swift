@@ -343,7 +343,6 @@ class ClaudeNotifierDaemon: NSObject {
         var total: Int
         var completed: Int
         var agents: [(id: String, name: String, type: String)]
-        var pendingTurnStop: Bool = false
     }
     var agentSessions: [String: AgentSession] = [:]
 
@@ -883,11 +882,10 @@ class ClaudeNotifierDaemon: NSObject {
         guard let sessionId = json["session_id"] as? String else { return }
         let ts = ISO8601DateFormatter().string(from: Date())
 
-        // If subagents are still active, defer the turn completion
-        if var agentState = agentSessions[sessionId], !agentState.agents.isEmpty {
-            agentState.pendingTurnStop = true
-            agentSessions[sessionId] = agentState
-            print("[\(ts)] daemon: turn_stop deferred for \(sessionId) — \(agentState.agents.count) subagent(s) still active")
+        // If subagents are still active, ignore this intermediate stop —
+        // the main agent will fire another Stop when it truly finishes.
+        if let agentState = agentSessions[sessionId], !agentState.agents.isEmpty {
+            print("[\(ts)] daemon: turn_stop ignored for \(sessionId) — \(agentState.agents.count) subagent(s) still active")
             return
         }
 
@@ -971,10 +969,11 @@ class ClaudeNotifierDaemon: NSObject {
             let message = "\(agentName) done \(progress)"
             print("[\(ts)] daemon: \(message) parent=\(parentId)")
 
-            // If all subagents done and turn_stop was deferred, complete now
-            if session.agents.isEmpty && session.pendingTurnStop {
+            // Clean up agent tracking when all subagents are done.
+            // Don't call completeTurnStop here — the main agent will resume
+            // processing subagent results and fire its own Stop event when truly done.
+            if session.agents.isEmpty {
                 agentSessions.removeValue(forKey: parentId)
-                completeTurnStop(sessionId: parentId)
             }
             refresh()
         } else {

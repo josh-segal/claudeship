@@ -7,8 +7,7 @@
 # Exit 0 = always let the agent proceed.
 #
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$PROJECT_ROOT"
+cd "$CLAUDE_PROJECT_DIR"
 
 # ─── Collect changed files ───────────────────────────────────────────
 CHANGED_FILES=$(
