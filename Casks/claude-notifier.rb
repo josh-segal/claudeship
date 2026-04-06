@@ -2,10 +2,10 @@ cask "claude-notifier" do
   version "0.1.0"
   sha256 "TODO"
 
-  url "https://github.com/joshuasegal/claudeship/releases/download/v#{version}/ClaudeNotifier.zip"
+  url "https://github.com/josh-segal/claudeship/releases/download/v#{version}/ClaudeNotifier.zip"
   name "Claude Notifier"
   desc "Menubar daemon for Claude Code notifications"
-  homepage "https://github.com/joshuasegal/claudeship"
+  homepage "https://github.com/josh-segal/claudeship"
 
   depends_on macos: ">= :monterey"
 
