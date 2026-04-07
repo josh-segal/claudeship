@@ -1,6 +1,6 @@
 {
   "name": "claudeship",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Multi-account workflows, usage tracking, quality gates, and macOS notifications for Claude Code",
   "author": {
     "name": "Joshua Segal"
