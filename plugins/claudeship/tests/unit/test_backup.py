@@ -156,8 +156,6 @@ def test_cmd_diff_shows_changes(config_dir, capsys):
 def test_cmd_file_restores(config_dir, capsys):
     from backup import cmd_file
 
-    original = (config_dir / "settings.json").read_text()
-
     # Modify and commit so we have a backup of the original
     (config_dir / "settings.json").write_text('{"theme": "light"}')
     subprocess.run(["git", "add", "-A"], cwd=str(config_dir), env=GIT_ENV, check=True)
