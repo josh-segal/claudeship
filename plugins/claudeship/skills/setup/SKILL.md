@@ -2,7 +2,7 @@
 name: setup
 description: Configure claudeship after installation. Sets up statusline, accounts, and optional notifier.
 user-invocable: true
-allowed-tools: Bash
+allowed-tools: Bash, Read, Edit
 ---
 
 # Claudeship Setup
@@ -42,6 +42,23 @@ Tell the user to add this to their `~/.claude/settings.json` (or their account's
 ```
 
 Replace `<RESOLVED_PATH>` with the actual path printed above.
+
+## Config Permissions
+
+Claudeship needs permission to edit files in `~/.claude/` (and `~/.claude-*/` for multi-account setups) so that backup/restore and account management work correctly.
+
+Read the user's `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json` if set). Check if the `permissions.allow` array already contains entries for `Edit(~/.claude/**)` and `Write(~/.claude/**)`.
+
+If not, add these allow rules to the `permissions.allow` array (create the array if it doesn't exist):
+
+```json
+"Edit(~/.claude/**)",
+"Edit(~/.claude-*/**)",
+"Write(~/.claude/**)",
+"Write(~/.claude-*/**)"
+```
+
+Tell the user what you're adding and why before making the edit. If the user declines, note that backup/restore will still work (it uses git commands internally) but Claude won't be able to directly edit config files.
 
 ## Accounts (optional)
 
