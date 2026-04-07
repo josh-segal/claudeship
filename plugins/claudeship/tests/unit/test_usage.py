@@ -3,13 +3,16 @@ from datetime import datetime, timezone, timedelta
 
 import pytest
 
-from conftest import make_entry
+from conftest import make_entry, expected_cost
 
 
 # ── Fixtures & helpers ────────────────────────────────────────────────────────
 
 NOW = datetime(2026, 4, 15, 15, 0, 0, tzinfo=timezone.utc)
 # week_start = April 13 (Mon). month_start = April 1.
+
+# Cost of one default entry (100 input, 50 output)
+DEFAULT_COST = expected_cost()
 
 
 @pytest.fixture
@@ -38,11 +41,11 @@ def test_today_entry_in_all_buckets(state_file, projects_dir):
 
     proj = projects_dir / "proj"
     proj.mkdir()
-    write_jsonl(proj, "session.jsonl", [make_entry(0.10, ts(days_ago=0))])
+    write_jsonl(proj, "session.jsonl", [make_entry(ts(days_ago=0))])
     buckets = compute_usage(str(projects_dir), NOW)
-    assert buckets["daily"]["cost"] == pytest.approx(0.10)
-    assert buckets["weekly"]["cost"] == pytest.approx(0.10)
-    assert buckets["monthly"]["cost"] == pytest.approx(0.10)
+    assert buckets["daily"]["cost"] == pytest.approx(DEFAULT_COST)
+    assert buckets["weekly"]["cost"] == pytest.approx(DEFAULT_COST)
+    assert buckets["monthly"]["cost"] == pytest.approx(DEFAULT_COST)
 
 
 def test_this_week_not_today_skips_daily(state_file, projects_dir):
@@ -51,11 +54,11 @@ def test_this_week_not_today_skips_daily(state_file, projects_dir):
     proj = projects_dir / "proj"
     proj.mkdir()
     # NOW is Wednesday Apr 15; days_ago=1 is Tuesday Apr 14 — same week, not today
-    write_jsonl(proj, "session.jsonl", [make_entry(0.20, ts(days_ago=1))])
+    write_jsonl(proj, "session.jsonl", [make_entry(ts(days_ago=1))])
     buckets = compute_usage(str(projects_dir), NOW)
     assert buckets["daily"]["cost"] == pytest.approx(0.0)
-    assert buckets["weekly"]["cost"] == pytest.approx(0.20)
-    assert buckets["monthly"]["cost"] == pytest.approx(0.20)
+    assert buckets["weekly"]["cost"] == pytest.approx(DEFAULT_COST)
+    assert buckets["monthly"]["cost"] == pytest.approx(DEFAULT_COST)
 
 
 def test_this_month_not_this_week_skips_daily_and_weekly(state_file, projects_dir):
@@ -64,11 +67,11 @@ def test_this_month_not_this_week_skips_daily_and_weekly(state_file, projects_di
     proj = projects_dir / "proj"
     proj.mkdir()
     # days_ago=7 = Apr 8; week_start is Apr 13 so Apr 8 is last week, same month
-    write_jsonl(proj, "session.jsonl", [make_entry(0.30, ts(days_ago=7))])
+    write_jsonl(proj, "session.jsonl", [make_entry(ts(days_ago=7))])
     buckets = compute_usage(str(projects_dir), NOW)
     assert buckets["daily"]["cost"] == pytest.approx(0.0)
     assert buckets["weekly"]["cost"] == pytest.approx(0.0)
-    assert buckets["monthly"]["cost"] == pytest.approx(0.30)
+    assert buckets["monthly"]["cost"] == pytest.approx(DEFAULT_COST)
 
 
 def test_old_entry_not_counted(state_file, projects_dir):
@@ -76,7 +79,7 @@ def test_old_entry_not_counted(state_file, projects_dir):
 
     proj = projects_dir / "proj"
     proj.mkdir()
-    write_jsonl(proj, "session.jsonl", [make_entry(1.00, ts(days_ago=45))])
+    write_jsonl(proj, "session.jsonl", [make_entry(ts(days_ago=45))])
     buckets = compute_usage(str(projects_dir), NOW)
     assert all(b["cost"] == 0.0 for b in buckets.values())
 
@@ -91,11 +94,9 @@ def test_boundary_at_today_midnight_counts_as_today(state_file, projects_dir):
     proj = projects_dir / "proj"
     proj.mkdir()
     midnight = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
-    write_jsonl(
-        proj, "s.jsonl", [make_entry(0.10, midnight.strftime("%Y-%m-%dT%H:%M:%SZ"))]
-    )
+    write_jsonl(proj, "s.jsonl", [make_entry(midnight.strftime("%Y-%m-%dT%H:%M:%SZ"))])
     buckets = compute_usage(str(projects_dir), NOW)
-    assert buckets["daily"]["cost"] == pytest.approx(0.10)
+    assert buckets["daily"]["cost"] == pytest.approx(DEFAULT_COST)
 
 
 def test_boundary_at_week_start_counts_as_this_week(state_file, projects_dir):
@@ -107,10 +108,10 @@ def test_boundary_at_week_start_counts_as_this_week(state_file, projects_dir):
     today_start = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=today_start.weekday())  # Monday
     write_jsonl(
-        proj, "s.jsonl", [make_entry(0.10, week_start.strftime("%Y-%m-%dT%H:%M:%SZ"))]
+        proj, "s.jsonl", [make_entry(week_start.strftime("%Y-%m-%dT%H:%M:%SZ"))]
     )
     buckets = compute_usage(str(projects_dir), NOW)
-    assert buckets["weekly"]["cost"] == pytest.approx(0.10)
+    assert buckets["weekly"]["cost"] == pytest.approx(DEFAULT_COST)
 
 
 def test_boundary_at_month_start_counts_as_this_month(state_file, projects_dir):
@@ -121,26 +122,33 @@ def test_boundary_at_month_start_counts_as_this_month(state_file, projects_dir):
     proj.mkdir()
     month_start = NOW.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     write_jsonl(
-        proj, "s.jsonl", [make_entry(0.10, month_start.strftime("%Y-%m-%dT%H:%M:%SZ"))]
+        proj, "s.jsonl", [make_entry(month_start.strftime("%Y-%m-%dT%H:%M:%SZ"))]
     )
     buckets = compute_usage(str(projects_dir), NOW)
-    assert buckets["monthly"]["cost"] == pytest.approx(0.10)
+    assert buckets["monthly"]["cost"] == pytest.approx(DEFAULT_COST)
 
 
 # ── Robustness ────────────────────────────────────────────────────────────────
 
 
-def test_zero_cost_entry_skipped(state_file, projects_dir):
+def test_zero_token_entry_skipped(state_file, projects_dir):
     from usage import compute_usage
 
     proj = projects_dir / "proj"
     proj.mkdir()
-    write_jsonl(proj, "session.jsonl", [make_entry(0.0, ts()), make_entry(0.05, ts())])
+    write_jsonl(
+        proj,
+        "session.jsonl",
+        [
+            make_entry(ts(), input_tokens=0, output_tokens=0),
+            make_entry(ts()),
+        ],
+    )
     buckets = compute_usage(str(projects_dir), NOW)
-    assert buckets["daily"]["cost"] == pytest.approx(0.05)
+    assert buckets["daily"]["cost"] == pytest.approx(DEFAULT_COST)
 
 
-def test_missing_cost_field_skipped(state_file, projects_dir):
+def test_missing_usage_field_skipped(state_file, projects_dir):
     from usage import compute_usage
 
     proj = projects_dir / "proj"
@@ -155,8 +163,10 @@ def test_malformed_json_line_skipped(state_file, projects_dir):
 
     proj = projects_dir / "proj"
     proj.mkdir()
-    write_jsonl(proj, "session.jsonl", ["{bad json", make_entry(0.10, ts())])
-    assert compute_usage(str(projects_dir), NOW)["daily"]["cost"] == pytest.approx(0.10)
+    write_jsonl(proj, "session.jsonl", ["{bad json", make_entry(ts())])
+    assert compute_usage(str(projects_dir), NOW)["daily"]["cost"] == pytest.approx(
+        DEFAULT_COST
+    )
 
 
 # ── Aggregation ───────────────────────────────────────────────────────────────
@@ -168,8 +178,10 @@ def test_multiple_files_and_projects(state_file, projects_dir):
     for name in ("proj-a", "proj-b"):
         d = projects_dir / name
         d.mkdir()
-        write_jsonl(d, "s.jsonl", [make_entry(0.10, ts())])
-    assert compute_usage(str(projects_dir), NOW)["daily"]["cost"] == pytest.approx(0.20)
+        write_jsonl(d, "s.jsonl", [make_entry(ts())])
+    assert compute_usage(str(projects_dir), NOW)["daily"]["cost"] == pytest.approx(
+        DEFAULT_COST * 2
+    )
 
 
 def test_token_counts_accumulated(state_file, projects_dir):
@@ -181,8 +193,8 @@ def test_token_counts_accumulated(state_file, projects_dir):
         proj,
         "s.jsonl",
         [
-            make_entry(0.10, ts(), input_tokens=1000, output_tokens=200, cache_read=50),
-            make_entry(0.05, ts(), input_tokens=500, output_tokens=100, cache_read=25),
+            make_entry(ts(), input_tokens=1000, output_tokens=200, cache_read=50),
+            make_entry(ts(), input_tokens=500, output_tokens=100, cache_read=25),
         ],
     )
     b = compute_usage(str(projects_dir), NOW)["daily"]
@@ -196,7 +208,9 @@ def test_costs_are_rounded_to_six_decimals(state_file, projects_dir):
 
     proj = projects_dir / "proj"
     proj.mkdir()
-    write_jsonl(proj, "s.jsonl", [make_entry(0.1 + 0.2, ts())])
+    write_jsonl(
+        proj, "s.jsonl", [make_entry(ts(), input_tokens=333, output_tokens=777)]
+    )
     cost_str = str(compute_usage(str(projects_dir), NOW)["daily"]["cost"])
     assert len(cost_str.split(".")[-1]) <= 6
 
@@ -207,7 +221,7 @@ def test_json_output_keys_present(state_file, projects_dir):
     proj = projects_dir / "proj"
     proj.mkdir()
     write_jsonl(
-        proj, "s.jsonl", [make_entry(0.25, ts(), input_tokens=1000, output_tokens=200)]
+        proj, "s.jsonl", [make_entry(ts(), input_tokens=1000, output_tokens=200)]
     )
     buckets = compute_usage(str(projects_dir), NOW)
     for period in ("daily", "weekly", "monthly"):

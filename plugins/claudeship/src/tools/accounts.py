@@ -7,6 +7,8 @@ Commands:
   add <name> --config-dir <path> --color <c> [--display-name <n>] [--link-to <account>]
   remove <name>
   current                                   Detect from CLAUDE_CONFIG_DIR
+  unlink <name>                             Copy shared files so account is standalone
+  link <name> [--to <account>]              Symlink files back to shared account (default: master ~/.claude)
 """
 
 import json
@@ -85,6 +87,32 @@ def link_account(target_dir: str, source_dir: str):
         linked.append(item)
         print(f"  ✓ Linked {item} → {src_path}")
     return linked
+
+
+def unlink_account(target_dir: str):
+    """Replace symlinks with copies so the account is standalone."""
+    import shutil
+
+    target = os.path.expanduser(target_dir)
+    unlinked = []
+    for item in LINKABLE:
+        tgt_path = os.path.join(target, item)
+        if not os.path.islink(tgt_path):
+            print(f"  ⚠ {item} is not a symlink, skipping")
+            continue
+        real_path = os.path.realpath(tgt_path)
+        if not os.path.exists(real_path):
+            print(f"  ⚠ {item} symlink target does not exist, removing broken link")
+            os.unlink(tgt_path)
+            continue
+        os.unlink(tgt_path)
+        if os.path.isdir(real_path):
+            shutil.copytree(real_path, tgt_path)
+        else:
+            shutil.copy2(real_path, tgt_path)
+        unlinked.append(item)
+        print(f"  ✓ Unlinked {item} (copied from {real_path})")
+    return unlinked
 
 
 def alias_for(name: str, config_dir: str) -> str:
@@ -332,6 +360,84 @@ def cmd_setup():
     print()
 
 
+MASTER_DIR = "~/.claude"
+
+
+def cmd_unlink(args):
+    if not args:
+        print("Error: missing account name", file=sys.stderr)
+        sys.exit(1)
+    name = args[0]
+
+    accounts = load_accounts()
+    if name not in accounts:
+        print(f"Error: account '{name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    config_dir = accounts[name]["config_dir"]
+    expanded = os.path.expanduser(config_dir)
+
+    # Check if there's anything to unlink
+    has_links = any(os.path.islink(os.path.join(expanded, item)) for item in LINKABLE)
+    if not has_links:
+        print(f"Account '{name}' has no linked files — already standalone.")
+        return
+
+    print(f"\nUnlinking account '{name}' ({config_dir}):")
+    unlinked = unlink_account(config_dir)
+    if unlinked:
+        print(
+            f"\nAccount '{name}' is now standalone. Edit files directly in {config_dir}"
+        )
+    else:
+        print("\nNothing to unlink.")
+
+
+def cmd_link(args):
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="accounts.py link")
+    parser.add_argument("name")
+    parser.add_argument(
+        "--to",
+        default=None,
+        help="Account name or path to link to (default: ~/.claude)",
+    )
+    parsed = parser.parse_args(args)
+
+    accounts = load_accounts()
+    if parsed.name not in accounts:
+        print(f"Error: account '{parsed.name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    config_dir = accounts[parsed.name]["config_dir"]
+
+    if parsed.to:
+        if parsed.to in accounts:
+            source_dir = accounts[parsed.to]["config_dir"]
+        else:
+            source_dir = parsed.to
+    else:
+        source_dir = MASTER_DIR
+
+    source_expanded = os.path.expanduser(source_dir)
+    if not os.path.isdir(source_expanded):
+        print(f"Error: source '{source_dir}' does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    target_expanded = os.path.expanduser(config_dir)
+    if os.path.realpath(target_expanded) == os.path.realpath(source_expanded):
+        print("Error: cannot link account to itself", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"\nLinking account '{parsed.name}' ({config_dir}) → {source_dir}:")
+    linked = link_account(config_dir, source_dir)
+    if linked:
+        print(f"\nAccount '{parsed.name}' now shares config with {source_dir}")
+    else:
+        print("\nNothing to link.")
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -350,6 +456,10 @@ def main():
         cmd_current()
     elif command == "setup":
         cmd_setup()
+    elif command == "unlink":
+        cmd_unlink(rest)
+    elif command == "link":
+        cmd_link(rest)
     else:
         print(f"Unknown command: {command}", file=sys.stderr)
         print(__doc__)

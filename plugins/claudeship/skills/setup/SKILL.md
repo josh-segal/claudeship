@@ -7,7 +7,21 @@ allowed-tools: Bash
 
 # Claudeship Setup
 
-Help the user configure claudeship.
+Help the user configure claudeship. Walk through each section in order.
+
+## ClaudeNotifier (optional, macOS only)
+
+For macOS desktop notifications (permission prompts, session tracking, menu bar status), the user can install the ClaudeNotifier app via Homebrew:
+
+```bash
+brew install --cask claude-notifier
+```
+
+After install:
+1. The app is unsigned, so macOS will block it on first launch. Go to **System Settings > Privacy & Security**, scroll to the Security section, and click **"Open Anyway"** next to the ClaudeNotifier warning.
+2. Grant notification permissions: **System Settings > Notifications > Claude Notifier** and set the style to Banners or Alerts.
+
+Without the notifier, all hooks still work — notification features just silently skip.
 
 ## StatusLine
 
@@ -35,13 +49,3 @@ If the user wants to set up multi-account support, run the interactive wizard:
 ```
 !python3 ${CLAUDE_PLUGIN_ROOT}/src/tools/accounts.py setup
 ```
-
-## ClaudeNotifier (optional)
-
-For macOS desktop notifications (permission prompts, session tracking, menu bar status), the user can install the ClaudeNotifier app:
-
-```bash
-bash ${CLAUDE_PLUGIN_ROOT}/src/notifier/install-notifier.sh
-```
-
-Without the notifier, all hooks still work — notification features just silently skip.

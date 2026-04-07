@@ -44,11 +44,7 @@ def _model_pricing(model: str) -> tuple:
 
 
 def _estimate_cost(entry: dict) -> float:
-    """Estimate cost from token usage when costUSD is absent."""
-    cost = entry.get("costUSD")
-    if isinstance(cost, (int, float)) and cost > 0:
-        return cost
-
+    """Estimate cost from token usage."""
     if entry.get("type") != "assistant":
         return 0.0
 

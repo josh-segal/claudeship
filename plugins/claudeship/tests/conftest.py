@@ -73,17 +73,15 @@ def populated_accounts(accounts_dir, tmp_path):
 
 
 def make_entry(
-    cost: float,
     timestamp: str,
     input_tokens: int = 100,
     output_tokens: int = 50,
     cache_read: int = 0,
 ) -> str:
-    """Return a JSONL line with the given cost and timestamp."""
+    """Return a JSONL line with the given token counts and timestamp."""
     return json.dumps(
         {
             "type": "assistant",
-            "costUSD": cost,
             "timestamp": timestamp,
             "message": {
                 "usage": {
@@ -94,6 +92,13 @@ def make_entry(
             },
         }
     )
+
+
+def expected_cost(
+    input_tokens: int = 100, output_tokens: int = 50, cache_read: int = 0
+) -> float:
+    """Compute expected cost using default (sonnet-4) pricing: 3.00/15.00/0.30 per M tokens."""
+    return (input_tokens * 3.00 + output_tokens * 15.00 + cache_read * 0.30) / 1_000_000
 
 
 # ── Mock Unix socket ──────────────────────────────────────────────────────────
