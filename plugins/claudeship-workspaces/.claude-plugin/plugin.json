@@ -1,11 +1,16 @@
 {
   "name": "claudeship-workspaces",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Git worktree workspace orchestration with Docker lifecycle management for Claude Code",
   "author": {
     "name": "Joshua Segal"
   },
   "repository": "https://github.com/joshuasegal/claudeship",
   "license": "MIT",
-  "keywords": ["workspaces", "worktree", "docker", "orchestration"]
+  "keywords": [
+    "workspaces",
+    "worktree",
+    "docker",
+    "orchestration"
+  ]
 }

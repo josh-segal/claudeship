@@ -10,7 +10,9 @@
       ".git",
       ".version-bump.json",
       "scripts/bump-version.sh",
-      "Casks/claude-notifier.rb"
+      "Casks/claude-notifier.rb",
+      ".claude",
+      "CLAUDE.md"
     ]
   }
 }
