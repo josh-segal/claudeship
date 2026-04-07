@@ -1,0 +1,16 @@
+{
+  "files": [
+    { "path": "plugins/claudeship/.claude-plugin/plugin.json", "field": "version" },
+    { "path": "plugins/claudeship-workspaces/.claude-plugin/plugin.json", "field": "version" }
+  ],
+  "audit": {
+    "exclude": [
+      "CHANGELOG.md",
+      "node_modules",
+      ".git",
+      ".version-bump.json",
+      "scripts/bump-version.sh",
+      "Casks/claude-notifier.rb"
+    ]
+  }
+}

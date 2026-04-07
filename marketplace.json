@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "claudeship-local",
+  "name": "claudeship",
   "owner": {
     "name": "Joshua Segal",
     "email": "josh@joshuasegal.com"
@@ -9,7 +9,12 @@
     {
       "name": "claudeship",
       "description": "Multi-account workflows, usage tracking, quality gates, and macOS notifications",
-      "source": "./"
+      "source": "./plugins/claudeship"
+    },
+    {
+      "name": "claudeship-workspaces",
+      "description": "Git worktree workspace orchestration with Docker lifecycle management",
+      "source": "./plugins/claudeship-workspaces"
     }
   ]
 }

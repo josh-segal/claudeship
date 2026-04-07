@@ -24,13 +24,13 @@ jobs:
 
           # Compile
           swiftc -swift-version 5 \
-            src/notifier/ClaudeNotifier.swift \
+            notifier/ClaudeNotifier.swift \
             -o ClaudeNotifier.app/Contents/MacOS/ClaudeNotifier \
             -framework Cocoa
 
           # Info.plist with version stamped
           sed "s/\${VERSION}/${{ steps.version.outputs.version }}/g" \
-            src/notifier/Info.plist > ClaudeNotifier.app/Contents/Info.plist
+            notifier/Info.plist > ClaudeNotifier.app/Contents/Info.plist
 
           # Codesign
           codesign --force --deep --sign - ClaudeNotifier.app
@@ -51,9 +51,14 @@ jobs:
             --generate-notes \
             ClaudeNotifier.zip
 
-      - name: Print SHA256
+      - name: Update Homebrew cask
         run: |
-          echo "::notice::SHA256: ${{ steps.sha.outputs.sha256 }}"
-          echo "Update Casks/claude-notifier.rb with:"
-          echo "  version \"${{ steps.version.outputs.version }}\""
-          echo "  sha256 \"${{ steps.sha.outputs.sha256 }}\""
+          VERSION="${{ steps.version.outputs.version }}"
+          SHA="${{ steps.sha.outputs.sha256 }}"
+          sed -i '' "s/version \".*\"/version \"$VERSION\"/" Casks/claude-notifier.rb
+          sed -i '' "s/sha256 \".*\"/sha256 \"$SHA\"/" Casks/claude-notifier.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/claude-notifier.rb
+          git commit -m "update cask to v$VERSION"
+          git push origin HEAD:main

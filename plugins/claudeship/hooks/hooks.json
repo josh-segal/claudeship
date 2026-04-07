@@ -117,10 +117,6 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/src/hooks/notifications/notify-subagent-stop.sh\""
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/src/tools/usage.py\" > /dev/null 2>&1"
           }
         ]
       }

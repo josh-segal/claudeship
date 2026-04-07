@@ -1,3 +1,3 @@
-mcp/node_modules
+plugins/claudeship-workspaces/mcp/node_modules
 __pycache__
-src/notifier/ClaudeNotifier
+notifier/ClaudeNotifier

@@ -13,6 +13,7 @@ if [ -f /tmp/claude-anim-pid ]; then
   rm -f /tmp/claude-anim-pid
 fi
 
+# Update usage stats in background (don't block turn completion)
 python3 "${CLAUDE_PLUGIN_ROOT}/src/tools/usage.py" > /dev/null 2>&1 &
 
 exit 0
