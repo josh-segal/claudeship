@@ -84,7 +84,7 @@ CI (`release.yml`) builds ClaudeNotifier.app, creates a GitHub Release, and auto
 
 Users install plugins via:
 ```
-/plugin marketplace add joshuasegal/claudeship
+/plugin marketplace add josh-segal/claudeship
 /plugin install claudeship
 /plugin install claudeship-workspaces
 ```
