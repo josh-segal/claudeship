@@ -42,6 +42,23 @@ BASENAME_PATTERNS=(
     "docker-compose*.yaml"
 )
 
+# ─── Home dotfile protection ────────────────────────────────────────
+# Block edits to ~/.<anything> except ~/.claude and ~/.claude-*
+HOME_DIR="$HOME"
+RESOLVED_PATH="$FILE_PATH"
+# Expand ~ if present
+[[ "$RESOLVED_PATH" == ~/* ]] && RESOLVED_PATH="$HOME_DIR/${RESOLVED_PATH#\~/}"
+
+if [[ "$RESOLVED_PATH" == "$HOME_DIR"/.* ]]; then
+    # Allow ~/.claude and ~/.claude-* directories
+    if [[ "$RESOLVED_PATH" == "$HOME_DIR"/.claude/* || "$RESOLVED_PATH" == "$HOME_DIR"/.claude-* ]]; then
+        : # allowed
+    else
+        echo "BLOCKED: '$FILE_PATH' is a home dotfile outside ~/.claude." >&2
+        exit 2
+    fi
+fi
+
 # ─── Protected path patterns ────────────────────────────────────────
 PATH_PATTERNS=(
     "terraform/*"

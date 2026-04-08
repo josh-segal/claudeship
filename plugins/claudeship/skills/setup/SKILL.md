@@ -2,7 +2,7 @@
 name: setup
 description: Configure claudeship after installation. Sets up statusline, accounts, and optional notifier.
 user-invocable: true
-allowed-tools: Bash
+allowed-tools: Bash, Read, Edit
 ---
 
 # Claudeship Setup

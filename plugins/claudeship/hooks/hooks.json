@@ -6,6 +6,10 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/src/hooks/notifications/notify-session-register.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/src/hooks/backup-init.sh\""
           }
         ]
       }
@@ -55,6 +59,15 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/src/hooks/block-dangerous-commands.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/src/hooks/backup-pre-edit.sh\""
           }
         ]
       },

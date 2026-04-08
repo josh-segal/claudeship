@@ -98,10 +98,6 @@ def run_hook_with_sock(
     """
     import tempfile
 
-    wrapper = f"""#!/bin/bash
-SOCK="{sock_path}"
-{open(hook_path).read().split("SOCK=")[1].split("\n", 1)[1] if "SOCK=" in open(hook_path).read() else ""}
-"""
     # Cleaner approach: just sed the SOCK line
     hook_content = open(hook_path).read()
     patched = hook_content.replace(
@@ -353,8 +349,6 @@ class TestPermissionHookClearing:
         # Run the hook and immediately write the chosen answer to the FIFO so
         # the read succeeds before the timeout.
         import threading
-
-        hook_pid_holder = []
 
         def write_fifo_reply():
             # Give the hook time to create the FIFO and start blocking

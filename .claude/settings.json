@@ -3,10 +3,6 @@
   "enableAllProjectMcpServers": true,
   "permissions": {
     "deny": [
-      "Edit(~/.*)",
-      "Edit(~/.*/**)",
-      "Write(~/.*)",
-      "Write(~/.*/**)",
       "Bash(sudo *)"
     ]
   },
