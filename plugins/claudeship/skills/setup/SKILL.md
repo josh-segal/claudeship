@@ -9,9 +9,16 @@ allowed-tools: Bash
 
 Help the user configure claudeship. Walk through each section in order.
 
-## ClaudeNotifier (optional, macOS only)
+## ClaudeNotifier (optional)
 
-For macOS desktop notifications (permission prompts, session tracking, menu bar status), the user can install the ClaudeNotifier app via Homebrew:
+Detect the user's OS first:
+```
+!uname -s
+```
+
+### macOS
+
+Install the ClaudeNotifier menubar app via Homebrew:
 
 ```bash
 brew install --cask claude-notifier
@@ -20,6 +27,16 @@ brew install --cask claude-notifier
 After install:
 1. The app is unsigned, so macOS will block it on first launch. Go to **System Settings > Privacy & Security**, scroll to the Security section, and click **"Open Anyway"** next to the ClaudeNotifier warning.
 2. Grant notification permissions: **System Settings > Notifications > Claude Notifier** and set the style to Banners or Alerts.
+
+### Linux
+
+Run the Linux installer to set up the notification daemon and Waybar adapter:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/../../notifier/install.sh
+```
+
+This installs `claudeship-notifier` (daemon) and `claudeship-waybar-adapter` to `~/.local/bin`, and optionally creates a systemd user service. Follow the printed instructions to add the Waybar config snippet.
 
 Without the notifier, all hooks still work — notification features just silently skip.
 

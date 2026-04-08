@@ -17,11 +17,44 @@ input=$(cat)
 subtitle="$(basename "$PWD")"
 
 parsed=$(echo "$input" | python3 -c "$(cat << 'PYEOF'
-import sys, json
+import sys, json, os, shlex
 d = json.load(sys.stdin)
 tool = d.get('tool_name', 'a tool')
 tool_input = d.get('tool_input', {})
 suggestions = d.get('permission_suggestions', [])
+
+# Build a descriptive question showing what the tool will do
+if tool == 'Bash':
+    raw = tool_input.get('command', '')
+    try:
+        parts = shlex.split(raw)
+        preview = ' '.join(parts[:4]) if parts else raw[:80]
+    except Exception:
+        preview = raw[:80]
+    question = f"Bash: {preview}" if preview else tool
+elif tool in ('Read', 'Write', 'Edit'):
+    path = tool_input.get('file_path') or tool_input.get('path', '')
+    question = f"{tool}: {path}" if path else tool
+elif tool == 'WebSearch':
+    query = tool_input.get('query', '')
+    question = f"WebSearch: {query}" if query else tool
+elif tool == 'WebFetch':
+    url = tool_input.get('url', '')
+    question = f"WebFetch: {url}" if url else tool
+elif tool == 'Grep':
+    pattern = tool_input.get('pattern', '')
+    question = f"Grep: {pattern}" if pattern else tool
+elif tool == 'Glob':
+    pattern = tool_input.get('pattern', '')
+    question = f"Glob: {pattern}" if pattern else tool
+else:
+    # Generic: show first string value from tool_input
+    preview = ''
+    for v in tool_input.values():
+        if isinstance(v, str) and v:
+            preview = v[:80]
+            break
+    question = f"{tool}: {preview}" if preview else tool
 
 # Build option labels matching what Claude Code shows in the terminal
 options = ['Yes']
@@ -44,11 +77,12 @@ if suggestions:
 options.append('No')
 behaviors.append('deny')
 
-print(json.dumps({'tool': tool, 'options': options, 'behaviors': behaviors}))
+print(json.dumps({'tool': tool, 'question': question, 'options': options, 'behaviors': behaviors}))
 PYEOF
 )")
 
 tool=$(echo "$parsed" | python3 -c "import json,sys; print(json.load(sys.stdin)['tool'])")
+question=$(echo "$parsed" | python3 -c "import json,sys; print(json.load(sys.stdin)['question'])")
 options_json=$(echo "$parsed" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['options']))")
 behaviors_json=$(echo "$parsed" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['behaviors']))")
 suggestions_json=$(echo "$input" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('permission_suggestions', [])))")
@@ -75,12 +109,13 @@ import json, sys
 print(json.dumps({
     'type':       'input_question',
     'request_id': sys.argv[1],
-    'question':   sys.argv[2],
-    'options':    json.loads(sys.argv[3]),
-    'subtitle':   sys.argv[4],
-    'session_id': sys.argv[5],
-    'reply_fifo': sys.argv[6]
-}))" "$REQUEST_ID" "$tool" "$options_json" "$subtitle" "$SESSION_ID" "$FIFO_PATH" 2>/dev/null)
+    'tool':       sys.argv[2],
+    'question':   sys.argv[3],
+    'options':    json.loads(sys.argv[4]),
+    'subtitle':   sys.argv[5],
+    'session_id': sys.argv[6],
+    'reply_fifo': sys.argv[7]
+}))" "$REQUEST_ID" "$tool" "$question" "$options_json" "$subtitle" "$SESSION_ID" "$FIFO_PATH" 2>/dev/null)
 
 printf '%s' "$payload" | nc -U -w 2 "$SOCK"
 
