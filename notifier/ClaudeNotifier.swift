@@ -918,10 +918,13 @@ class ClaudeNotifierDaemon: NSObject {
             if self.pendingInputs.isEmpty { self.panel.orderOut(nil) }
         }
 
-        // Auto-open panel
+        // Auto-open panel only when Ghostty is not focused (bell handles that case)
         refresh()
-        positionPanel()
-        panel.orderFrontRegardless()
+        let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName?.lowercased() ?? ""
+        if frontApp != "ghostty" {
+            positionPanel()
+            panel.orderFrontRegardless()
+        }
     }
 
     // ── Subagent handlers ─────────────────────────────────────────────────────
