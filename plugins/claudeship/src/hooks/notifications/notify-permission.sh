@@ -13,8 +13,8 @@ LOG="/tmp/claude-notifier.log"
 REQUEST_ID="$$"
 FIFO_PATH="/tmp/claude-fifo-$$"
 
-if ! read -r -t 5 input; then
-    echo "[$(date '+%H:%M:%S.%3N')] $(basename "$0"): stdin read timed out" >> /tmp/claude-notifier.log
+if ! read -r -t 5 input && [ -z "$input" ]; then
+    echo "[$(date '+%H:%M:%S.%3N')] $(basename "$0"): stdin read timed out" >> "$LOG"
     exit 0
 fi
 subtitle="$(basename "$PWD")"

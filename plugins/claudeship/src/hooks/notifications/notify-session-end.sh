@@ -7,9 +7,10 @@
 #
 
 SOCK="/tmp/claude-notifier.sock"
+LOG="/tmp/claude-notifier.log"
 
-if ! read -r -t 5 input; then
-    echo "[$(date '+%H:%M:%S.%3N')] $(basename "$0"): stdin read timed out" >> /tmp/claude-notifier.log
+if ! read -r -t 5 input && [ -z "$input" ]; then
+    echo "[$(date '+%H:%M:%S.%3N')] $(basename "$0"): stdin read timed out" >> "$LOG"
     exit 0
 fi
 
@@ -28,6 +29,7 @@ if not session_id:
 print(json.dumps({'type': 'session_end', 'session_id': session_id}))
 " "$input" 2>/dev/null)
 
+[ -n "$payload" ] && echo "[$(date '+%H:%M:%S.%3N')] session_end: $payload" >> "$LOG"
 [ -n "$payload" ] && [ -S "$SOCK" ] && printf '%s' "$payload" | nc -U -w 2 "$SOCK"
 
 exit 0
