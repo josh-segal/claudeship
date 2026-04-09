@@ -7,6 +7,11 @@
 # Exit 0 = always let the agent proceed.
 #
 
+# Watchdog: kill this script after 5 seconds so it never blocks the Stop hook
+(sleep 5 && kill $$ 2>/dev/null) &
+_WATCHDOG=$!
+trap "kill $_WATCHDOG 2>/dev/null" EXIT TERM
+
 cd "$CLAUDE_PROJECT_DIR"
 
 # ─── Collect changed files ───────────────────────────────────────────

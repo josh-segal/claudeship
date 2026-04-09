@@ -5,7 +5,7 @@ set -euo pipefail
 # Configuration
 # ---------------------------------------------------------------------------
 
-MAIN_CHECKOUT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MAIN_CHECKOUT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 WORKTREE_ROOT="$(dirname "$MAIN_CHECKOUT")/next-chief-of-staff-worktrees"
 # Derive branch prefix from git user name (e.g. "Josh Segal" → "josh-segal")
 BRANCH_PREFIX="$(git -C "$MAIN_CHECKOUT" config user.name 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
@@ -13,7 +13,7 @@ if [[ -z "$BRANCH_PREFIX" ]]; then
   echo "Error: git user.name is not set. Run: git config user.name \"Your Name\""
   exit 1
 fi
-BASE_BRANCH="dev"
+BASE_BRANCH="main"
 
 BASE_COMPOSE="docker-compose.yml"
 OVERRIDE_FILE="docker-compose.workspace.yml"
