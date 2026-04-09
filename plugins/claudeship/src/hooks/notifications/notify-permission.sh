@@ -13,7 +13,10 @@ LOG="/tmp/claude-notifier.log"
 REQUEST_ID="$$"
 FIFO_PATH="/tmp/claude-fifo-$$"
 
-input=$(cat)
+if ! read -r -t 5 input; then
+    echo "[$(date '+%H:%M:%S.%3N')] $(basename "$0"): stdin read timed out" >> /tmp/claude-notifier.log
+    exit 0
+fi
 subtitle="$(basename "$PWD")"
 
 parsed=$(echo "$input" | python3 -c "$(cat << 'PYEOF'

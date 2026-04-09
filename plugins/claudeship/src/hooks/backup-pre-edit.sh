@@ -6,7 +6,10 @@
 # Exit 0 always (never block).
 #
 
-INPUT=$(cat)
+if ! read -r -t 5 INPUT; then
+    echo "[$(date '+%H:%M:%S.%3N')] $(basename "$0"): stdin read timed out" >> /tmp/claude-notifier.log
+    exit 0
+fi
 
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // empty' 2>/dev/null)
 

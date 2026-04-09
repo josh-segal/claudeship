@@ -8,7 +8,10 @@
 SOCK="/tmp/claude-notifier.sock"
 LOG="/tmp/claude-notifier.log"
 
-input=$(cat)
+if ! read -r -t 5 input; then
+    echo "[$(date '+%H:%M:%S.%3N')] $(basename "$0"): stdin read timed out" >> /tmp/claude-notifier.log
+    exit 0
+fi
 message=$(echo "$input" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)

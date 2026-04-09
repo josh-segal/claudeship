@@ -34,7 +34,10 @@ print(json.dumps({
 fi
 
 # ── AskUserQuestion: parse structured options ─────────────────────────────────
-input=$(cat)
+if ! read -r -t 5 input; then
+    echo "[$(date '+%H:%M:%S.%3N')] $(basename "$0"): stdin read timed out" >> /tmp/claude-notifier.log
+    exit 0
+fi
 
 parsed=$(echo "$input" | python3 -c "$(cat << 'PYEOF'
 import sys, json

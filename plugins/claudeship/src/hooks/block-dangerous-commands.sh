@@ -7,7 +7,10 @@
 # Exit 0 = allow.
 #
 
-INPUT=$(cat)
+if ! read -r -t 5 INPUT; then
+    echo "[$(date '+%H:%M:%S.%3N')] $(basename "$0"): stdin read timed out" >> /tmp/claude-notifier.log
+    exit 0
+fi
 
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 

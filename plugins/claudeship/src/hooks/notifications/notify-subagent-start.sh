@@ -9,7 +9,10 @@
 SOCK="/tmp/claude-notifier.sock"
 LOG="/tmp/claude-notifier.log"
 
-input=$(cat)
+if ! read -r -t 5 input; then
+    echo "[$(date '+%H:%M:%S.%3N')] $(basename "$0"): stdin read timed out" >> /tmp/claude-notifier.log
+    exit 0
+fi
 
 # Log raw JSON so we can verify field names on first run
 echo "[$(date '+%H:%M:%S.%3N')] notify-subagent-start.sh RAW: $input" >> "$LOG"
