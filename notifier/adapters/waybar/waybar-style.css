@@ -1,0 +1,29 @@
+/* Add to your Waybar style (typically ~/.config/waybar/style.css) */
+
+#custom-claudeship {
+    padding: 0 8px;
+    margin: 0 4px;
+    border-radius: 4px;
+}
+
+#custom-claudeship.working {
+    color: #a6e3a1;
+}
+
+#custom-claudeship.idle {
+    color: #94e2d5;
+}
+
+#custom-claudeship.done {
+    color: #a6e3a1;
+    background: rgba(166, 227, 161, 0.1);
+}
+
+#custom-claudeship.input-pending {
+    color: #f9e2af;
+    animation: blink 1s infinite;
+}
+
+@keyframes blink {
+    50% { opacity: 0.5; }
+}

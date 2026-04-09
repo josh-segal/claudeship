@@ -1,0 +1,13 @@
+// Add this to your Waybar config (typically ~/.config/waybar/config.jsonc)
+// 1. Add "custom/claudeship" to your modules-left, modules-center, or modules-right array
+// 2. Add this block alongside your other module configs:
+
+"custom/claudeship": {
+    "exec": "claudeship-waybar-adapter",
+    "return-type": "json",
+    "interval": "once",
+    "signal": 8,
+    "tooltip": true,
+    "escape": true,
+    "on-click": "sel=$($HOME/.local/bin/claudeship-notifier --panel | rofi -dmenu -p claudeship) && [ -n \"$sel\" ] && $HOME/.local/bin/claudeship-notifier --focus \"$sel\""
+}
