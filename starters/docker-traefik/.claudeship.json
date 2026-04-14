@@ -1,0 +1,9 @@
+{
+  "workspace": {
+    "lifecycle": {
+      "setup": "bash .claudeship/setup.sh",
+      "run": "bash .claudeship/run.sh",
+      "teardown": "bash .claudeship/teardown.sh"
+    }
+  }
+}

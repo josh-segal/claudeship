@@ -1,0 +1,9 @@
+{
+  "workspace": {
+    "lifecycle": {
+      "setup": "",
+      "run": "",
+      "teardown": ""
+    }
+  }
+}
