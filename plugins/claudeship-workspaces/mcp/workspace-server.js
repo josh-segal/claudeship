@@ -40,41 +40,88 @@ const types_js_1 = require("@modelcontextprotocol/sdk/types.js");
 const child_process_1 = require("child_process");
 const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+// MCP uses stdout for protocol — all diagnostic logging goes to stderr
+function log(msg) {
+    process.stderr.write(`[claudeship] ${msg}\n`);
+}
 function loadUserConfig() {
+    const p = path.join(process.env.HOME ?? "", ".claude", "claudeship.json");
     try {
-        const p = path.join(process.env.HOME ?? "", ".claude", "claudeship.json");
-        return JSON.parse(fs.readFileSync(p, "utf8"));
+        const cfg = JSON.parse(fs.readFileSync(p, "utf8"));
+        log(`config: loaded user config from ${p}`);
+        return cfg;
     }
     catch {
+        log(`config: no user config at ${p} (using defaults)`);
         return {};
     }
 }
 function loadProjectConfig() {
+    const p = path.join(getRepoRoot(), ".claudeship.json");
     try {
-        const p = path.join(getRepoRoot(), ".claudeship.json");
-        return JSON.parse(fs.readFileSync(p, "utf8"));
+        const cfg = JSON.parse(fs.readFileSync(p, "utf8"));
+        log(`config: loaded project config from ${p}`);
+        return cfg;
     }
     catch {
+        log(`config: no project config at ${p} (using defaults)`);
         return {};
     }
 }
 function resolveConfig() {
     const user = loadUserConfig();
     const project = loadProjectConfig();
+    // Terminal: user config > $TERM_PROGRAM > empty
+    const terminal = user.terminal ?? process.env.TERM_PROGRAM?.toLowerCase();
+    if (user.terminal) {
+        log(`config: terminal = "${terminal}" (from user config)`);
+    }
+    else if (process.env.TERM_PROGRAM) {
+        log(`config: terminal = "${terminal}" (from $TERM_PROGRAM)`);
+    }
+    else {
+        log(`config: terminal = none (no user config or $TERM_PROGRAM)`);
+    }
+    // Claude command: project > user > default
+    let claudeSource;
+    const claude = project.commands?.claude ?? user.commands?.claude ?? "claude";
+    if (project.commands?.claude) {
+        claudeSource = "project config";
+    }
+    else if (user.commands?.claude) {
+        claudeSource = "user config";
+    }
+    else {
+        claudeSource = "default";
+    }
+    log(`config: claude command = "${claude}" (from ${claudeSource})`);
+    // Lifecycle: project only
+    const lifecycle = project.workspace?.lifecycle;
+    if (lifecycle) {
+        log(`config: lifecycle.setup = ${lifecycle.setup ? `"${lifecycle.setup}"` : "(empty)"}`);
+        log(`config: lifecycle.run = ${lifecycle.run ? `"${lifecycle.run}"` : "(empty)"}`);
+        log(`config: lifecycle.teardown = ${lifecycle.teardown ? `"${lifecycle.teardown}"` : "(empty)"}`);
+    }
+    else {
+        log(`config: no lifecycle scripts configured`);
+    }
     return {
-        // terminal is user-only — it's a machine property, never from project config
-        terminal: user.terminal ?? process.env.TERM_PROGRAM?.toLowerCase(),
-        commands: {
-            // project wins, then user, then default
-            claude: project.commands?.claude ?? user.commands?.claude ?? "claude",
-        },
-        // lifecycle comes from project only
+        terminal,
+        commands: { claude },
         workspace: project.workspace,
     };
 }
-function runLifecycleScript(script, env) {
-    if (!script || script.trim() === "")
+function runLifecycleScript(phase, script, env) {
+    if (!script || script.trim() === "") {
+        log(`lifecycle: ${phase} — skipped (no script configured)`);
         return { ok: true, output: "" };
+    }
+    log(`lifecycle: ${phase} — running: ${script}`);
+    log(`lifecycle: ${phase} — cwd: ${env.WORKSPACE_PATH}`);
+    log(`lifecycle: ${phase} — env: WORKSPACE_NAME=${env.WORKSPACE_NAME}, MAIN_CHECKOUT=${env.MAIN_CHECKOUT}`);
     try {
         const output = (0, child_process_1.execSync)(script, {
             cwd: env.WORKSPACE_PATH,
@@ -82,10 +129,12 @@ function runLifecycleScript(script, env) {
             env: { ...process.env, ...env },
             timeout: 300_000, // 5 minute timeout for lifecycle scripts
         });
+        log(`lifecycle: ${phase} — completed successfully`);
         return { ok: true, output: output.trim() };
     }
     catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        log(`lifecycle: ${phase} — FAILED: ${msg}`);
         return { ok: false, output: msg };
     }
 }
@@ -362,8 +411,8 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
                 WORKSPACE_NAME: wsName,
                 MAIN_CHECKOUT: getRepoRoot(),
             };
-            const setupResult = runLifecycleScript(cfg.workspace?.lifecycle?.setup, lifecycleEnv);
-            const runResult = runLifecycleScript(cfg.workspace?.lifecycle?.run, lifecycleEnv);
+            const setupResult = runLifecycleScript("setup", cfg.workspace?.lifecycle?.setup, lifecycleEnv);
+            const runResult = runLifecycleScript("run", cfg.workspace?.lifecycle?.run, lifecycleEnv);
             return {
                 content: [
                     {
@@ -407,8 +456,9 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
             const cfg = resolveConfig();
             const claudeCmd = cfg.commands?.claude ?? "claude";
             const terminal = cfg.terminal ?? "";
+            log(`open: platform=${process.platform}, terminal="${terminal}", command="${claudeCmd}"`);
             if (process.platform === "darwin" && terminal === "ghostty") {
-                // Open a new Ghostty tab with Claude Code in the worktree directory
+                log(`open: using Ghostty AppleScript tab creation`);
                 try {
                     (0, child_process_1.execSync)(`osascript -e '
             tell application "Ghostty"
@@ -419,9 +469,11 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
               set t to new tab in front window with configuration cfgAS
             end tell
           '`);
+                    log(`open: Ghostty tab created successfully`);
                 }
                 catch (e) {
-                    // Fall back to detached spawn if AppleScript fails
+                    const msg = e instanceof Error ? e.message : String(e);
+                    log(`open: Ghostty AppleScript failed (${msg}), falling back to detached spawn`);
                     const child = (0, child_process_1.spawn)(claudeCmd, [wt], {
                         detached: true,
                         stdio: "ignore",
@@ -431,7 +483,15 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
                 }
             }
             else {
-                // Fallback: detached spawn (Linux, unsupported terminal)
+                if (process.platform !== "darwin") {
+                    log(`open: non-darwin platform, using detached spawn`);
+                }
+                else if (!terminal) {
+                    log(`open: no terminal configured, using detached spawn`);
+                }
+                else {
+                    log(`open: terminal "${terminal}" not supported for tab creation, using detached spawn`);
+                }
                 const child = (0, child_process_1.spawn)(claudeCmd, [wt], {
                     detached: true,
                     stdio: "ignore",
@@ -543,7 +603,7 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
                 WORKSPACE_NAME: wsName,
                 MAIN_CHECKOUT: getRepoRoot(),
             };
-            const teardownResult = runLifecycleScript(cfg.workspace?.lifecycle?.teardown, lifecycleEnv);
+            const teardownResult = runLifecycleScript("teardown", cfg.workspace?.lifecycle?.teardown, lifecycleEnv);
             try {
                 const out = runWorkspaceSh("destroy", wsName);
                 return {
