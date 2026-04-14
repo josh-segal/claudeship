@@ -14,6 +14,80 @@ import * as fs from "fs";
 // Config
 // ---------------------------------------------------------------------------
 
+interface ClaudeshipConfig {
+  terminal?: string;
+  commands?: {
+    claude?: string;
+  };
+  workspace?: {
+    lifecycle?: {
+      setup?: string;
+      run?: string;
+      teardown?: string;
+    };
+  };
+}
+
+function loadUserConfig(): ClaudeshipConfig {
+  try {
+    const p = path.join(process.env.HOME ?? "", ".claude", "claudeship.json");
+    return JSON.parse(fs.readFileSync(p, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function loadProjectConfig(): ClaudeshipConfig {
+  try {
+    const p = path.join(getRepoRoot(), ".claudeship.json");
+    return JSON.parse(fs.readFileSync(p, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function resolveConfig(): ClaudeshipConfig {
+  const user = loadUserConfig();
+  const project = loadProjectConfig();
+
+  return {
+    // terminal is user-only — it's a machine property, never from project config
+    terminal: user.terminal ?? process.env.TERM_PROGRAM?.toLowerCase(),
+
+    commands: {
+      // project wins, then user, then default
+      claude: project.commands?.claude ?? user.commands?.claude ?? "claude",
+    },
+
+    // lifecycle comes from project only
+    workspace: project.workspace,
+  };
+}
+
+interface LifecycleResult {
+  ok: boolean;
+  output: string;
+}
+
+function runLifecycleScript(
+  script: string | undefined,
+  env: { WORKSPACE_PATH: string; WORKSPACE_NAME: string; MAIN_CHECKOUT: string },
+): LifecycleResult {
+  if (!script || script.trim() === "") return { ok: true, output: "" };
+  try {
+    const output = execSync(script, {
+      cwd: env.WORKSPACE_PATH,
+      encoding: "utf8",
+      env: { ...process.env, ...env },
+      timeout: 300_000, // 5 minute timeout for lifecycle scripts
+    });
+    return { ok: true, output: output.trim() };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, output: msg };
+  }
+}
+
 // Plugin location — used only to locate workspace.sh
 const PLUGIN_DIR = path.resolve(__dirname, "..");
 const WORKSPACE_SH = path.join(PLUGIN_DIR, "workspace.sh");
@@ -66,21 +140,6 @@ function runWorkspaceSh(...args: string[]): string {
   return run(`bash "${WORKSPACE_SH}" ${args.map((a) => `"${a}"`).join(" ")}`);
 }
 
-function isStackRunning(projectName: string): boolean {
-  try {
-    const out = execSync(
-      `docker compose -p "${projectName}" ps --status running 2>/dev/null`,
-      { encoding: "utf8" },
-    );
-    return out
-      .split("\n")
-      .slice(1)
-      .some((l) => l.trim().length > 0);
-  } catch {
-    return false;
-  }
-}
-
 function worktreeExists(name: string): boolean {
   try {
     const wt = worktreePath(name);
@@ -130,8 +189,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Always call this before workspace_create — it is the policy gate. " +
         "\n\nRecommend YES (recommend: true) when the task needs any of: " +
         "(1) isolation — parallel work that would conflict with main or another workspace; " +
-        "(2) a running stack — the work requires Docker services to develop or test; " +
-        "(3) its own branch — the change is going somewhere independently from dev. " +
+        "(2) a running stack — the work requires services to develop or test; " +
+        "(3) its own branch — the change is going somewhere independently. " +
         "\n\nRecommend NO (recommend: false) when the task is: " +
         "reading or understanding code; a single-file or docs-only edit; " +
         "a question or debugging session with no writes; a change that needs no running stack to validate; " +
@@ -152,11 +211,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "workspace_create",
       description:
-        "Creates an isolated workspace for a task: git worktree on a new branch, Docker Compose stack with Traefik routing, " +
-        "and a workspace-specific CLAUDE.md with task context. Also creates .workspace/research.md and .workspace/plan.md as " +
-        "artifact stubs for the research subagent to populate. " +
+        "Creates an isolated workspace for a task: git worktree on a new branch, " +
+        "a workspace-specific CLAUDE.md with task context, and runs project-configured lifecycle scripts (setup, run). " +
+        "Also creates .workspace/research.md and .workspace/plan.md as artifact stubs for the research subagent to populate. " +
         "Use after workspace_suggest confirms a workspace is warranted. " +
-        "Returns the worktree path and service URLs once the stack is healthy.",
+        "Returns the worktree path and lifecycle results.",
       inputSchema: {
         type: "object",
         properties: {
@@ -194,7 +253,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "workspace_list",
       description:
-        "Lists all workspaces with their status, branch, Docker state, and URLs. " +
+        "Lists all workspaces with their branch, last commit, and worktree path. " +
         "Use to check what workspaces exist before creating a new one, or to get an overview of active work.",
       inputSchema: {
         type: "object",
@@ -204,8 +263,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "workspace_status",
       description:
-        "Returns detailed status for a single workspace: branch, commits ahead/behind, Docker health, and service URLs. " +
-        "Use when you need to know if a workspace's stack is running before doing work inside it.",
+        "Returns detailed status for a single workspace: branch, commits ahead/behind, and last commit. " +
+        "Use when you need to check on a workspace's git state.",
       inputSchema: {
         type: "object",
         properties: {
@@ -220,7 +279,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "workspace_destroy",
       description:
-        "Stops the Docker stack and removes the worktree and branch for a workspace. " +
+        "Runs the teardown lifecycle script, then removes the worktree and branch for a workspace. " +
         "Use after work is complete and merged, or to clean up abandoned workspaces. " +
         "Keeps the branch if it has unmerged commits.",
       inputSchema: {
@@ -298,7 +357,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const wsName = args?.name as string;
       const task = args?.task as string;
 
-      // Run workspace.sh up (creates worktree, starts Docker, installs deps, copies .env + .claude)
+      // Run workspace.sh up (creates worktree, copies .env + .claude/)
       let upOutput: string;
       try {
         upOutput = runWorkspaceSh("up", wsName);
@@ -329,6 +388,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const wt = worktreePath(wsName);
       const branch = `${getBranchPrefix()}/${wsName}`;
 
+      // Run project lifecycle scripts
+      const cfg = resolveConfig();
+      const lifecycleEnv = {
+        WORKSPACE_PATH: wt,
+        WORKSPACE_NAME: wsName,
+        MAIN_CHECKOUT: getRepoRoot(),
+      };
+      const setupResult = runLifecycleScript(cfg.workspace?.lifecycle?.setup, lifecycleEnv);
+      const runResult = runLifecycleScript(cfg.workspace?.lifecycle?.run, lifecycleEnv);
+
       return {
         content: [
           {
@@ -338,9 +407,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               name: wsName,
               worktree_path: wt,
               branch,
-              frontend_url: `http://cos-${wsName}.lvh.me`,
-              api_url: `http://api-cos-${wsName}.lvh.me`,
-              phoenix_url: `http://phoenix-cos-${wsName}.lvh.me`,
+              lifecycle: {
+                setup: setupResult,
+                run: runResult,
+              },
               artifacts: {
                 research: path.join(wt, ".workspace", "research.md"),
                 plan: path.join(wt, ".workspace", "plan.md"),
@@ -371,13 +441,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      // Shell out to open a new Claude Code session in the worktree directory
-      const child = spawn("claude", [wt], {
-        detached: true,
-        stdio: "ignore",
-        shell: true,
-      });
-      child.unref();
+      const cfg = resolveConfig();
+      const claudeCmd = cfg.commands?.claude ?? "claude";
+      const terminal = cfg.terminal ?? "";
+
+      if (process.platform === "darwin" && terminal === "ghostty") {
+        // Open a new Ghostty tab with Claude Code in the worktree directory
+        try {
+          execSync(`osascript -e '
+            tell application "Ghostty"
+              activate
+              set cfgAS to new surface configuration
+              set initial working directory of cfgAS to "${wt}"
+              set command of cfgAS to "${claudeCmd}"
+              set t to new tab in front window with configuration cfgAS
+            end tell
+          '`);
+        } catch (e: unknown) {
+          // Fall back to detached spawn if AppleScript fails
+          const child = spawn(claudeCmd, [wt], {
+            detached: true,
+            stdio: "ignore",
+            shell: true,
+          });
+          child.unref();
+        }
+      } else {
+        // Fallback: detached spawn (Linux, unsupported terminal)
+        const child = spawn(claudeCmd, [wt], {
+          detached: true,
+          stdio: "ignore",
+          shell: true,
+        });
+        child.unref();
+      }
 
       return {
         content: [
@@ -387,6 +484,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               success: true,
               message: `Opening Claude Code session in ${wt}`,
               worktree_path: wt,
+              terminal: terminal || "default",
+              claude_command: claudeCmd,
             }),
           },
         ],
@@ -411,18 +510,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       const workspaces = names.map((wsName) => {
-        const project = `cos-${wsName}`;
         const wt = worktreePath(wsName);
         const branch = `${getBranchPrefix()}/${wsName}`;
-        const running = isStackRunning(project);
 
         let lastCommit = "unknown";
         try {
           lastCommit = run(
             `git log -1 --format='%h (%cr)' 2>/dev/null || echo unknown`,
-            {
-              cwd: wt,
-            },
+            { cwd: wt },
           );
         } catch {
           /* ignore */
@@ -432,14 +527,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           name: wsName,
           branch,
           last_commit: lastCommit,
-          docker: running ? "running" : "stopped",
-          ...(running
-            ? {
-                frontend_url: `http://cos-${wsName}.lvh.me`,
-                api_url: `http://api-cos-${wsName}.lvh.me`,
-                phoenix_url: `http://phoenix-cos-${wsName}.lvh.me`,
-              }
-            : {}),
           worktree_path: wt,
         };
       });
@@ -452,8 +539,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "workspace_status": {
       const wsName = args?.name as string;
       const wt = worktreePath(wsName);
-      const project = `cos-${wsName}`;
       const branch = `${getBranchPrefix()}/${wsName}`;
+      const baseBranch = "main";
 
       if (!worktreeExists(wsName)) {
         return {
@@ -473,14 +560,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         behind = "?",
         lastCommit = "unknown";
       try {
-        ahead = run(`git rev-list dev..${branch} --count`, { cwd: wt });
-        behind = run(`git rev-list ${branch}..dev --count`, { cwd: wt });
+        ahead = run(`git rev-list ${baseBranch}..${branch} --count`, { cwd: wt });
+        behind = run(`git rev-list ${branch}..${baseBranch} --count`, { cwd: wt });
         lastCommit = run(`git log -1 --format='%h %s (%cr)'`, { cwd: wt });
       } catch {
         /* ignore */
       }
-
-      const running = isStackRunning(project);
 
       return {
         content: [
@@ -493,14 +578,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               commits_ahead: ahead,
               commits_behind: behind,
               last_commit: lastCommit,
-              docker: running ? "running" : "stopped",
-              ...(running
-                ? {
-                    frontend_url: `http://cos-${wsName}.lvh.me`,
-                    api_url: `http://api-cos-${wsName}.lvh.me`,
-                    phoenix_url: `http://phoenix-cos-${wsName}.lvh.me`,
-                  }
-                : {}),
             }),
           },
         ],
@@ -509,6 +586,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     case "workspace_destroy": {
       const wsName = args?.name as string;
+      const wt = worktreePath(wsName);
+
+      // Run teardown lifecycle script before removing worktree
+      const cfg = resolveConfig();
+      const lifecycleEnv = {
+        WORKSPACE_PATH: wt,
+        WORKSPACE_NAME: wsName,
+        MAIN_CHECKOUT: getRepoRoot(),
+      };
+      const teardownResult = runLifecycleScript(cfg.workspace?.lifecycle?.teardown, lifecycleEnv);
 
       try {
         const out = runWorkspaceSh("destroy", wsName);
@@ -516,7 +603,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: "text",
-              text: JSON.stringify({ success: true, output: out }),
+              text: JSON.stringify({
+                success: true,
+                output: out,
+                lifecycle: { teardown: teardownResult },
+              }),
             },
           ],
         };
