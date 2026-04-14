@@ -40,16 +40,30 @@ const types_js_1 = require("@modelcontextprotocol/sdk/types.js");
 const child_process_1 = require("child_process");
 const path = __importStar(require("path"));
 // ---------------------------------------------------------------------------
-// Config — derived from the location of this script, mirroring workspace.sh
+// Config
 // ---------------------------------------------------------------------------
-const MAIN_CHECKOUT = path.resolve(__dirname, "..");
-const WORKSPACE_SH = path.join(MAIN_CHECKOUT, "workspace.sh");
+// Plugin location — used only to locate workspace.sh
+const PLUGIN_DIR = path.resolve(__dirname, "..");
+const WORKSPACE_SH = path.join(PLUGIN_DIR, "workspace.sh");
+// Repo root — resolved from the working directory Claude Code was launched in
+let _repoRoot = null;
+function getRepoRoot() {
+    if (!_repoRoot) {
+        _repoRoot = (0, child_process_1.execSync)("git rev-parse --show-toplevel", {
+            cwd: process.cwd(),
+            encoding: "utf8",
+        }).trim();
+    }
+    return _repoRoot;
+}
 function getWorktreeRoot() {
-    return path.join(path.dirname(MAIN_CHECKOUT), "next-chief-of-staff-worktrees");
+    const repoRoot = getRepoRoot();
+    const repoName = path.basename(repoRoot);
+    return path.join(path.dirname(repoRoot), `${repoName}-worktrees`);
 }
 function getBranchPrefix() {
     try {
-        const name = (0, child_process_1.execSync)("git config user.name", { cwd: MAIN_CHECKOUT })
+        const name = (0, child_process_1.execSync)("git config user.name", { cwd: getRepoRoot() })
             .toString()
             .trim();
         return name.toLowerCase().replace(/\s+/g, "-");
@@ -66,7 +80,7 @@ function worktreePath(name) {
 // ---------------------------------------------------------------------------
 function run(cmd, opts = {}) {
     return (0, child_process_1.execSync)(cmd, {
-        cwd: opts.cwd ?? MAIN_CHECKOUT,
+        cwd: opts.cwd ?? getRepoRoot(),
         encoding: "utf8",
     }).trim();
 }
@@ -102,7 +116,7 @@ function listWorktreeNames() {
         const names = [];
         for (const line of out.split("\n")) {
             const m = line.match(/^worktree (.+)$/);
-            if (m && m[1] !== MAIN_CHECKOUT && m[1].startsWith(worktreeRoot)) {
+            if (m && m[1] !== getRepoRoot() && m[1].startsWith(worktreeRoot)) {
                 names.push(path.basename(m[1]));
             }
         }

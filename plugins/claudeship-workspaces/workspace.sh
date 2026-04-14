@@ -5,8 +5,9 @@ set -euo pipefail
 # Configuration
 # ---------------------------------------------------------------------------
 
-MAIN_CHECKOUT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
-WORKTREE_ROOT="$(dirname "$MAIN_CHECKOUT")/next-chief-of-staff-worktrees"
+MAIN_CHECKOUT="$(git rev-parse --show-toplevel)"
+REPO_NAME="$(basename "$MAIN_CHECKOUT")"
+WORKTREE_ROOT="$(dirname "$MAIN_CHECKOUT")/${REPO_NAME}-worktrees"
 # Derive branch prefix from git user name (e.g. "Josh Segal" → "josh-segal")
 BRANCH_PREFIX="$(git -C "$MAIN_CHECKOUT" config user.name 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
 if [[ -z "$BRANCH_PREFIX" ]]; then
