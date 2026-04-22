@@ -1,46 +1,18 @@
 # claudeship
 
-A Claude Code plugin suite for multi-account workflows, usage tracking, safety hooks, cross-platform notifications, and workspace orchestration.
+A Claude Code plugin suite for sandboxed workspace orchestration, multi-account workflows, usage tracking, safety hooks, and cross-platform interactive notifications.
+
+![claudeship demo](public/claudeship-demo.gif)
 
 ## Features
 
-### Multi-Account Management
-
-Run multiple Claude Code accounts (work, personal, edu) side by side. Each account gets its own config directory, color-coded indicator, and shell alias. Switch between accounts per-session — no global active account.
-
-### Usage Tracking
-
-Track daily, weekly, and monthly spend and token counts across all accounts. Supports per-account breakdowns and history views via `/usage`.
-
-### Safety Hooks
-
-Lifecycle hooks that protect your environment out of the box:
-
-- **Dangerous command blocking** — prevents `rm -rf /`, `push --force`, `reset --hard`, `curl | sh`, and more
-- **File protection** — blocks edits to `.env`, lockfiles, `docker-compose.yml`, and `terraform/`
-- **Auto-formatting** — runs Prettier, Ruff, gofmt, or rustfmt on changed files at the end of each turn
-
-### Notifications (ClaudeNotifier)
-
-A notification daemon that shows live session status, subagent progress, and interactive notifications. Ships in two flavors — same socket protocol, same status file, same features — pick the one that matches your OS:
-
-- **macOS** — native Swift menubar app (`notifier/ClaudeNotifier.swift`), installed via Homebrew cask
-- **Linux** — Python asyncio daemon (`notifier/daemon/claudeship-notifier.py`) with a Waybar adapter in `notifier/adapters/waybar/`
-
-Both provide:
-
-- Color-coded account indicator with a braille spinner for active sessions
-- Clickable session panel — click to focus the matching terminal window
-- Interactive notifications for permission requests and questions — respond without switching to the terminal
-- Subagent progress tracking (`"Agent done (2/5)"`)
-
-On Linux, interactive dialogs are dispatched through `rofi`, `wofi`, `fuzzel`, or `zenity` (auto-detected, or set via `CLAUDESHIP_DIALOG_TOOL`).
-
 ### Workspace Orchestration
 
-Manage isolated git worktrees per feature branch, with configurable lifecycle scripts that run your project's setup, dev-server, and teardown commands.
+Manage isolated git worktrees per feature branch, with configurable lifecycle scripts that run your project's setup and teardown commands.
 
-The workspaces plugin handles the generic parts — creating the worktree, copying `.env` and `.claude/`, generating a workspace-scoped `CLAUDE.md` and `.workspace/` planning artifacts. Project-specific logic (installing deps, starting services, cleaning up) lives in shell scripts your repo owns, wired up through a small `.claudeship.json` config.
+The plugin handles the scaffolding (worktree creation, copying `.env` and `.claude/`, generating a workspace-scoped `CLAUDE.md` and `.workspace/` planning artifacts)
+
+Project-specific logic (installing deps, starting services, cleaning up) lives in shell scripts your repo owns, wired up through a `.claudeship.json` config.
 
 ```jsonc
 // .claudeship.json at your repo root
@@ -48,14 +20,27 @@ The workspaces plugin handles the generic parts — creating the worktree, copyi
   "workspace": {
     "lifecycle": {
       "setup":    "bash .claudeship/setup.sh",     // runs after worktree is created
-      "run":      "bash .claudeship/run.sh",       // starts dev services
+      "run":      "bash .claudeship/run.sh",       // starts services
       "teardown": "bash .claudeship/teardown.sh"   // runs before worktree is removed
     }
   }
 }
 ```
 
-Scripts receive `$WORKSPACE_PATH`, `$WORKSPACE_NAME`, and `$MAIN_CHECKOUT`. All three hooks are optional — omit what you don't need. `workspace_open` also launches a new Claude Code session in the worktree; on macOS with Ghostty, it opens as a new tab.
+Scripts receive `$WORKSPACE_PATH`, `$WORKSPACE_NAME`, and `$MAIN_CHECKOUT`. All three hooks are optional.
+
+Workspaces are driven through MCP tools the plugin exposes to Claude. Ask something like *"spin up a workspace for the auth refactor"* and it'll call the right ones:
+
+| Tool | What it does |
+|------|--------------|
+| `workspace_suggest` | Policy gate — decides whether a task warrants a workspace and suggests a name |
+| `workspace_create` | Creates the worktree + branch and runs `setup` → `run` lifecycle |
+| `workspace_open` | Launches a new Claude Code session in the worktree (Ghostty tab on macOS, detached spawn elsewhere) |
+| `workspace_list` | Lists all workspaces with branch and last-commit info |
+| `workspace_status` | Detailed status for one workspace — commits ahead/behind, last commit |
+| `workspace_destroy` | Runs `teardown` and removes the worktree + branch |
+
+Further terminal support for `workspace_open` is welcome.
 
 #### Starters
 
@@ -72,6 +57,37 @@ cp starters/docker-traefik/.claudeship.json .claudeship.json
 ```
 
 Contributions of new starters welcome — each one is a directory with a `.claudeship.json`, a `.claudeship/` script set, and a short `README.md`.
+
+### Multi-Account Management
+
+Run multiple Claude Code accounts (work, personal, school) side by side. Each account gets its own config directory, color-coded indicator, and shell alias.
+
+### Usage Tracking
+
+Track daily, weekly, and monthly spend and token counts across all accounts. Supports per-account breakdowns and history views via `/usage`. Usage is estimates since Anthropic removed cost_USD from session outputs, so make sure to check your real usage from time to time.
+
+### Safety Hooks
+
+Lifecycle hooks that protect your environment out of the box even in dangerous permissions modes:
+
+- **Dangerous command blocking** — prevents `rm -rf /`, `push --force`, `reset --hard`, `curl | sh`, and more
+- **File protection** — blocks edits to `.env`, lockfiles, `docker-compose.yml`, and `terraform/`
+- **Auto-formatting** — runs Prettier, Ruff, gofmt, or rustfmt on changed files at the end of each turn
+
+### Notifications (ClaudeNotifier)
+
+A notification daemon that shows live session status, subagent progress, and interactive notifications.
+
+- **macOS** — native Swift menubar app (`notifier/ClaudeNotifier.swift`), installed via Homebrew cask
+- **Linux** — Python asyncio daemon (`notifier/daemon/claudeship-notifier.py`) with a Waybar adapter in `notifier/adapters/waybar/`
+
+Both provide:
+
+- Color-coded account indicator with a braille spinner for active sessions
+- Clickable session panel — click to focus the matching terminal window
+- Interactive notifications for permission requests and questions — respond without switching to the terminal
+- Subagent progress tracking (`"Agent done (2/5)"`)
+
 
 ### Statusline
 
