@@ -1,3 +1,4 @@
 plugins/claudeship-workspaces/mcp/node_modules
 __pycache__
 notifier/ClaudeNotifier
+.DS_Store
